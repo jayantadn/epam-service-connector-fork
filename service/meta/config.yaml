@@ -40,16 +40,16 @@ configuration:
     workingDir: '/'
 
     # Quotas assigned to service
-    # quotas:
-        # cpu: 50
-        # mem: 32MB
-        # state: 64KB
-        # storage: 64MB
-        # upload_speed: 128KB
-        # download_speed: 128KB
-        # upload: 64MB
-        # download: 64MB
-        # temp: 32KB
+    quotas:
+        cpu: 100
+        mem: 256MB
+        state: 128KB
+        storage: 128MB
+        upload_speed: 1MB
+        download_speed: 1MB
+        upload: 512MB
+        download: 512MB
+        temp: 128KB
 
 # For additional information please visit the page:
 # https://docs.aoscloud.io/bin/view/Home/Architecture/General/Data%20formats/Service%20formats/Containers%20configuration%20file/
