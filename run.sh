@@ -14,7 +14,7 @@
 
 
 # Prepare environment variable for python
-export PYTHONPATH=/home/root/python-packages
+
 
 # Run python file
 cd ./service/src && /usr/bin/python3 -u syncer.py &
