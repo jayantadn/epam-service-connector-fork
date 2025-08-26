@@ -4,21 +4,13 @@ This guidance aim to setup a serivce on EPAM unit to receive python code from pl
 
 ## Folder struture
 ```bash
-- kuksa                         // this folder for KUKSA data broker
-    - databroker-amd64          // bin file for amd
-    - databroker-arm64          // bin file for arm
-    - vss.json                  // covesa API definition
-- python-packages               // this folder contain all require pytho libs
-    -
-    -
 - service                       // this folder for the connector service
     - meta
-        - config.yaml
+        - config.yaml           // service config file
     - src
         - app
-            - syncer.py             // this is the main app to connect between unit and plsyground.digital.auto.
+            - syncer.py         // this is the main app to connect between unit and plsyground.digital.auto.
             - ...
-- run.sh                        // this is a temporary solution to execute KUKSA and service manually while waiting for layer and service developement
 ```
 
 # Installation
