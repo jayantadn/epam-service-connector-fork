@@ -50,7 +50,7 @@ configuration:
 
     # Quotas assigned to service
     quotas:
-        cpu: 40
+        cpu: 10000
         mem: 100MB
         state: 128KB
         storage: 20MB
