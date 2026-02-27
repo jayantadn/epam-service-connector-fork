@@ -69,10 +69,11 @@ Here are some hints to get you started with Aos solutions:
    ![service id](assets/images/04_service_id.png)
 
 ## Step 2: 
-Go to file: service/meta/config.yaml, line 19, change `service_id` to `service ID`
+Go to file: service/meta/config.yaml, change `publish/service_uid` to `service ID` obtained above.
 
 ## Step 3
-Go to file: service/src/app/syncer.py, line 25, change DEFAULT_RUNTIME_NAME = 'EPAM-SERVICE-001' to a another unique name.
+Go to file: service/src/app/syncer.py, change DEFAULT_RUNTIME_NAME = 'EPAM-SERVICE-001' to a another unique name.
+
 ```python
 # set a secret name
 DEFAULT_RUNTIME_NAME = 'EPAM-ANHB-81'
