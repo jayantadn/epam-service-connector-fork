@@ -1,0 +1,43 @@
+#cloud-config
+hostname: vm1
+
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    home: /home/ubuntu
+    shell: /bin/bash
+
+ssh_pwauth: true
+chpasswd:
+  list: |
+    ubuntu:ubuntu
+  expire: false
+
+packages:
+  - iputils-ping
+  - docker.io
+
+write_files:
+  - path: /home/ubuntu/setup_runtime.sh
+    owner: root:root
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -e
+      
+      echo "Adding ubuntu user to docker group..."
+      usermod -aG docker ubuntu
+      
+      echo "Waiting for Docker daemon to be ready..."
+      while ! systemctl is-active --quiet docker; do
+        sleep 2
+      done
+      
+      echo "Launching SDV Runtime Docker container (ev-range)..."
+      docker run -d --name sdv-runtime --restart unless-stopped --network host -e RUNTIME_NAME="ev-range" -p 55555:55555 ghcr.io/eclipse-autowrx/sdv-runtime:latest
+      
+      echo "Setup complete!"
+
+runcmd:
+  # Run as root so we don't hit permission boundaries
+  - bash /home/ubuntu/setup_runtime.sh > /home/ubuntu/automated_setup.log 2>&1
