@@ -2,8 +2,7 @@
 
 # QEMU Multi-VM Network
 
-This script provides an automated, zero-touch deployment of a multi-node virtual network using QEMU, KVM and cloud-init. It provisions two isolated Ubuntu VMs that communicate over a private Layer 2 bridge while seamlessly maintaining full outbound internet access. It serves as a perfect lightweight, reproducible sandbox for testing distributed systems or Linux networking directly on your local machine.
-
+This script provides an automated, zero-touch deployment of a multi-node virtual network using QEMU, KVM and cloud-init. It provisions two isolated Ubuntu VMs that communicate over a private Layer 2 bridge while seamlessly maintaining full outbound internet access. the main aim is to create a runtime named ev-range on the digital.auto playgrounds that is running on the vm 1. and the host,vm1,vm2 can perform communication between them.Protype for the ev-range runtime :[Playground.Prototype](https://playground.digital.auto/model/67f76c0d8c609a0027662a69/library/prototype/69ce30f438bb8e98f0af5ac8/dashboard)
 ***
 ### Script Capabilities
 This script automatically provisions two VMs with the following capabilities:
@@ -11,11 +10,15 @@ This script automatically provisions two VMs with the following capabilities:
 2. **Host Isolation:** The host operating system's routing table and primary network interfaces remain uncompromised.
 
 ---
+**IP of Host ,vm1 ,vm2**
+
+* **'Host'":** 192.168.100.1
+* **'VM 1'":** 192.168.100.10
+* **'VM 2'":** 192.168.100.11
 
 ##  Core Components
 
-* **`setup.sh`:** Downloads the base Ubuntu Cloud Image, allocates the `.qcow2` virtual disks, and generates the `cloud-init` seed images.
-* **`network.sh`:** Configures the virtual network infrastructure by instantiating a Linux bridge, creating TAP interfaces, and applying required `iptables` forwarding rules on the host.
+* **`setup.sh`:** Downloads the base Ubuntu Cloud Image, allocates the `.qcow2` virtual disks, and generates the `cloud-init` seed images and establish network connection between the VM's and the vm1 will launch directly .
 * **`input/` directory:** Contains declarative `cloud-init` YAML files (`user-data`, `meta-data`, and network configs) to automatically inject hostnames (`vm1`, `vm2`) and static IP addresses (`192.168.100.10/24`, `192.168.100.11/24`) during the initial boot sequence.
 * **`vm1_launch.sh` & `vm2_launch.sh`:** The QEMU execution scripts that initialize the KVM guests, define system resources, and bind the virtual NICs to the correct network backends.
 
@@ -33,36 +36,35 @@ chmod +x *.sh
 
 **Step 1: Provision the VMs (QEMU & Cloud-Init)**
 
-Execute the setup script to download the base Ubuntu cloud image, allocate the `qcow2` virtual disks, and generate the `cloud-init` seed images containing the network configurations.
+Execute the setup script to download the base Ubuntu cloud image, allocate the `qcow2` virtual disks, and generate the `cloud-init` seed images containing the network configurations and launches VM 1, runtime is created and verfied over this setup.sh script .
 
 ```bash
 ./setup.sh
 ```
-
-**Step 2: Configure the Virtual Network Infrastructure**
-
-Run the network script with elevated privileges to instantiate the virtual bridge (`br0`), attach the TAP interfaces, and configure NAT/IP forwarding on the host.
-
-```bash
-./network.sh
-```
-
-**Step 3: Boot VM 1**
-
-Initialize the first QEMU instance. The VM's serial console will attach directly to your current terminal session.
-
-```bash
-./vm1_launch.sh
-```
-
-**Step 4: Boot VM 2**
+**Step 2: Boot VM 2**
 
 Open a **new, separate terminal window or tab** (to maintain parallel console sessions), and initialize the second QEMU instance.
 
 ```bash
 ./vm2_launch.sh
 ```
+**Step 3: to access VM 1**
 
+```bash
+ssh ubuntu@192.168.100.10
+```
+
+**Step 3: to access VM 2**
+
+```bash
+ssh ubuntu@192.168.100.11
+```
+2. Verify the SDV Runtime
+Log into VM1 and check if the Eclipse SDV Docker container is actively running:
+
+```bash
+docker ps
+```
 ---
 
 ##  How to Test It
