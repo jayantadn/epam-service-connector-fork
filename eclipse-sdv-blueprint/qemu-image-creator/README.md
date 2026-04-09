@@ -54,7 +54,7 @@ Open a **new, separate terminal window or tab** (to maintain parallel console se
 ssh ubuntu@192.168.100.10
 ```
 
-**Step 3: to access VM 2**
+**Step 4: to access VM 2**
 
 ```bash
 ssh ubuntu@192.168.100.11

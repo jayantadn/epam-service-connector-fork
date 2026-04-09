@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 set -e
 
 echo "======================================"
@@ -76,9 +77,6 @@ echo "======================================"
 echo "[SUCCESS] SETUP COMPLETED"
 echo "======================================"
 
-
-#!/bin/bash
-set -e
 echo "[INFO] Creating Bridge and TAP interfaces..."
 
 # 1. Create and enable the bridge

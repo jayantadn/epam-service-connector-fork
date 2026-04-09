@@ -101,7 +101,7 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 	- HPC-VM is launched by default
 	- digital.auto runtime is automatically launched. 
 1. Launch the Zonal-VM using the script vm2_launch.sh
-1. 
+
 
 
 ### Manual Setup

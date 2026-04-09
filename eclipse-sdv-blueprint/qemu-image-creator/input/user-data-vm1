@@ -34,7 +34,7 @@ write_files:
       done
       
       echo "Launching SDV Runtime Docker container (ev-range)..."
-      docker run -d --name sdv-runtime --restart unless-stopped --network host -e RUNTIME_NAME="ev-range" -p 55555:55555 ghcr.io/eclipse-autowrx/sdv-runtime:latest
+      docker run -d --name sdv-runtime --restart unless-stopped --network host -e RUNTIME_NAME="ev-range" ghcr.io/eclipse-autowrx/sdv-runtime:latest
       
       echo "Setup complete!"
 
