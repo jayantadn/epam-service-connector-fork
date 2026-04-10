@@ -1,0 +1,18 @@
+#cloud-config
+hostname: vm2
+
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: users, admin
+    home: /home/ubuntu
+    shell: /bin/bash
+
+ssh_pwauth: true
+chpasswd:
+  list: |
+    ubuntu:ubuntu
+  expire: false
+
+packages:
+  - iputils-ping

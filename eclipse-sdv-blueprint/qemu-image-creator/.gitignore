@@ -1,0 +1,36 @@
+# Output (Generated Files & Dirs)
+output/*
+!output/.gitkeep
+*.qcow2
+*.img
+*.iso
+
+# Logs & Temporary Files
+*.log
+*.tmp
+*.cache
+*.pid
+
+# SSH / Keys (Security)
+known_hosts
+*.pem
+*.key
+*.pub
+
+# System Files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE Files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.pyc
+
+# Misc
+*.bak
+*.old
