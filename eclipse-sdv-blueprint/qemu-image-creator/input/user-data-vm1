@@ -1,13 +1,4 @@
-# Copyright (c) 2026 Eclipse Foundation.
-#
-# This program and the accompanying materials are made available under the
-# terms of the MIT License which is available at
-# https://opensource.org/licenses/MIT.
-#
-# SPDX-License-Identifier: MIT
-
 #cloud-config
-
 hostname: vm1
 
 users:
@@ -16,25 +7,37 @@ users:
     groups: users, admin, docker
     home: /home/ubuntu
     shell: /bin/bash
+    lock_passwd: false
 
 ssh_pwauth: true
 chpasswd:
-  list: |
-    ubuntu:ubuntu
   expire: false
+  users:
+    - name: ubuntu
+      password: ubuntu
+      type: text
 
 packages:
   - iputils-ping
   - docker.io
   - python3
   - python3-pip
-  - python3.12-venv
   - python3-full
   - net-tools
   - iproute2
   - curl
 
 write_files:
+  # Force password SSH login on. Highest-numbered drop-in wins over
+  # any default cloud-image overrides (e.g. 60-cloudimg-settings.conf).
+  - path: /etc/ssh/sshd_config.d/99-xmel-pwauth.conf
+    permissions: '0644'
+    owner: root:root
+    content: |
+      PasswordAuthentication yes
+      KbdInteractiveAuthentication yes
+      PermitRootLogin no
+
   # Robust SDV Runtime startup script with retries, health checks and dedicated log file.
   # Re-runnable manually: sudo /usr/local/bin/xmel-start-runtime
   - path: /usr/local/bin/xmel-start-runtime
@@ -195,6 +198,9 @@ write_files:
 runcmd:
   - usermod -aG docker ubuntu
 
+  # Make sure sshd picks up the password-auth drop-in written above.
+  - systemctl restart ssh
+
   # Install Python packages required by xmel-client and Python apps.
   - |
     pip3 install --break-system-packages --ignore-installed kuksa-client grpcio grpcio-tools \
@@ -202,7 +208,7 @@ runcmd:
       >> /tmp/xmel-pip.log 2>&1 || \
       echo "WARNING: pip install reported errors, see /tmp/xmel-pip.log" >> /tmp/xmel-pip.log
 
-  # Start the SDV Runtime via the helper script. Detach with 'at' so cloud-init
+  # Start the SDV Runtime via the helper script. Background with & so cloud-init
   # does not block forever if the network is slow or ghcr.io is throttled.
   - /usr/local/bin/xmel-start-runtime &
 

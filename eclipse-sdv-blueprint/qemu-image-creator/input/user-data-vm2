@@ -1,13 +1,4 @@
-# Copyright (c) 2026 Eclipse Foundation.
-#
-# This program and the accompanying materials are made available under the
-# terms of the MIT License which is available at
-# https://opensource.org/licenses/MIT.
-#
-# SPDX-License-Identifier: MIT
-
 #cloud-config
-
 hostname: vm2
 
 users:
@@ -16,12 +7,15 @@ users:
     groups: users, admin, docker
     home: /home/ubuntu
     shell: /bin/bash
+    lock_passwd: false
 
 ssh_pwauth: true
 chpasswd:
-  list: |
-    ubuntu:ubuntu
   expire: false
+  users:
+    - name: ubuntu
+      password: ubuntu
+      type: text
 
 packages:
   - iputils-ping
@@ -40,10 +34,19 @@ packages:
   - curl
   - python3
   - python3-pip
-  - python3.12-venv
   - python3-full
 
 write_files:
+  # Force password SSH login on. Highest-numbered drop-in wins over
+  # any default cloud-image overrides (e.g. 60-cloudimg-settings.conf).
+  - path: /etc/ssh/sshd_config.d/99-xmel-pwauth.conf
+    permissions: '0644'
+    owner: root:root
+    content: |
+      PasswordAuthentication yes
+      KbdInteractiveAuthentication yes
+      PermitRootLogin no
+
   # Robust Kuksa Databroker startup script with retries, health checks
   # and dedicated log file. Re-runnable manually.
   - path: /usr/local/bin/xmel-start-databroker
@@ -54,7 +57,7 @@ write_files:
       # XMEL Kuksa Databroker startup helper for VM2 (linux-baremetal).
       set -uo pipefail
 
-      LOG_FILE="/tmp/xmel-runtime.log"
+      LOG_FILE="/tmp/xmel-databroker.log"
       CONTAINER="kuksa-databroker"
       IMAGE="ghcr.io/eclipse-kuksa/kuksa-databroker:main"
       DATABROKER_PORT="${DATABROKER_PORT:-55555}"
@@ -199,6 +202,9 @@ runcmd:
   - systemctl enable docker
   - systemctl start docker
   - usermod -aG docker ubuntu
+
+  # Make sure sshd picks up the password-auth drop-in written above.
+  - systemctl restart ssh
 
   # Refresh linker cache for gRPC libs (used by C++ apps).
   - ldconfig
