@@ -209,9 +209,12 @@ runcmd:
   # Refresh linker cache for gRPC libs (used by C++ apps).
   - ldconfig
 
-  # Install Python packages required by xmel-client.
+  # Install Python packages required by xmel-client and the grpc-demo
+  # (grpcio + grpcio-tools are needed so server.py runs and so generate.sh
+  # can regenerate the demo_pb2*.py stubs from grpc-demo/proto/demo.proto).
   - |
-    pip3 install --break-system-packages --ignore-installed eclipse-zenoh pyyaml jsonschema \
+    pip3 install --break-system-packages --ignore-installed \
+      eclipse-zenoh pyyaml jsonschema grpcio grpcio-tools \
       >> /tmp/xmel-pip.log 2>&1 || \
       echo "WARNING: pip install reported errors, see /tmp/xmel-pip.log" >> /tmp/xmel-pip.log
 

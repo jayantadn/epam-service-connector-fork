@@ -1,5 +1,3 @@
-#!/bin/bash
-
 # Copyright (c) 2026 Eclipse Foundation.
 #
 # This program and the accompanying materials are made available under the
@@ -122,7 +120,9 @@ echo "======================================"
 echo ""
 # Hand off control to the VM1 launch script (This will trigger your background QEMU and polling spinner!)
 ./vm1_launch.sh
-
+echo ""
+# Hand off control to the VM2 launch script (This will trigger your background QEMU and polling spinner!)
+./vm2_launch.sh
 # ==========================================
 # Automated Polling: Wait for Docker Container
 # ==========================================

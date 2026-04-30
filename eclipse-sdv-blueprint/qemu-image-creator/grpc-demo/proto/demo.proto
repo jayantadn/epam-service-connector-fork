@@ -1,0 +1,37 @@
+// gRPC demo service for VM1 -> VM2 communication.
+//
+// Two RPC styles are exposed so the demo covers both classic
+// request/response and continuous streaming:
+//   - SayHello       : unary       (one request,  one response)
+//   - StreamSignals  : server-stream (one request, N responses)
+syntax = "proto3";
+
+package demo;
+
+service Demo {
+  rpc SayHello (HelloRequest) returns (HelloReply);
+
+  rpc StreamSignals (SignalRequest) returns (stream SignalUpdate);
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloReply {
+  string message = 1;
+  string server_hostname = 2;
+}
+
+message SignalRequest {
+  string signal_name = 1;
+  uint32 count = 2;
+  double interval_seconds = 3;
+}
+
+message SignalUpdate {
+  string signal_name = 1;
+  double value = 2;
+  uint64 sequence = 3;
+  string timestamp = 4;
+}
