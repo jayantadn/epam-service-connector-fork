@@ -4,6 +4,12 @@ Minimal Python gRPC demo running between the two QEMU VMs that
 `setup.sh` / `vm2_launch.sh` provision. **VM1 is the client**,
 **VM2 is the server**, mirroring the direction of the Zenoh demo.
 
+> **Not the main project demo.** This folder is a self-contained
+> RPC connectivity smoke-test for `tcp/50051` between the two VMs.
+> The production EV Range Extender flow (which uses Zenoh, not gRPC,
+> for cross-VM transport) lives in
+> [`../ev-range-extender/`](../ev-range-extender/).
+
 ## Topology
 
 ```

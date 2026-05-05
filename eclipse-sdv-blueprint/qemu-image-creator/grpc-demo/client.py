@@ -121,6 +121,5 @@ def main() -> int:
     print("[client] Done.")
     return 0
 
-
 if __name__ == "__main__":
     sys.exit(main())

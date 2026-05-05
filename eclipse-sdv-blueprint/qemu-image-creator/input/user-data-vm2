@@ -49,17 +49,27 @@ write_files:
 
   # Robust Kuksa Databroker startup script with retries, health checks
   # and dedicated log file. Re-runnable manually.
+  #
+  # We deliberately use the same `sdv-runtime` image as VM1 (instead of
+  # the bare `kuksa-databroker` image) so VM2 boots with the **standard
+  # COVESA VSS 4.x catalog already loaded** - no JSON download, no
+  # `--metadata` flag, no manual setup. Only the RUNTIME_NAME is changed
+  # (to `ev-range-cabin`) so the digital.auto cloud sync can tell the
+  # two VMs apart.
   - path: /usr/local/bin/xmel-start-databroker
     permissions: '0755'
     owner: root:root
     content: |
       #!/usr/bin/env bash
       # XMEL Kuksa Databroker startup helper for VM2 (linux-baremetal).
+      # Runs the same digital.auto SDV Runtime image as VM1 so the
+      # standard COVESA VSS catalog is preloaded.
       set -uo pipefail
 
       LOG_FILE="/tmp/xmel-databroker.log"
       CONTAINER="kuksa-databroker"
-      IMAGE="ghcr.io/eclipse-kuksa/kuksa-databroker:main"
+      IMAGE="ghcr.io/eclipse-autowrx/sdv-runtime:latest"
+      RUNTIME_NAME="${RUNTIME_NAME:-ev-range-cabin}"
       DATABROKER_PORT="${DATABROKER_PORT:-55555}"
       MAX_PULL_ATTEMPTS="${MAX_PULL_ATTEMPTS:-5}"
       PULL_BACKOFF_SECS="${PULL_BACKOFF_SECS:-10}"
@@ -121,12 +131,13 @@ write_files:
       }
 
       start_container() {
-          log "Starting container '$CONTAINER' (--insecure, --network host)..."
+          log "Starting container '$CONTAINER' (RUNTIME_NAME=$RUNTIME_NAME, --network host)..."
           if ! docker run -d \
                   --name "$CONTAINER" \
                   --restart unless-stopped \
                   --network host \
-                  "$IMAGE" --insecure >>"$LOG_FILE" 2>&1; then
+                  -e RUNTIME_NAME="$RUNTIME_NAME" \
+                  "$IMAGE" >>"$LOG_FILE" 2>&1; then
               log "ERROR: docker run failed"
               return 1
           fi
@@ -166,6 +177,7 @@ write_files:
           log "============================================================"
           log "Image          : $IMAGE"
           log "Container name : $CONTAINER"
+          log "Runtime name   : $RUNTIME_NAME"
           log "Databroker port: $DATABROKER_PORT"
           log "Log file       : $LOG_FILE"
           log "Re-run         : sudo /usr/local/bin/xmel-start-databroker"
@@ -209,12 +221,15 @@ runcmd:
   # Refresh linker cache for gRPC libs (used by C++ apps).
   - ldconfig
 
-  # Install Python packages required by xmel-client and the grpc-demo
-  # (grpcio + grpcio-tools are needed so server.py runs and so generate.sh
-  # can regenerate the demo_pb2*.py stubs from grpc-demo/proto/demo.proto).
+  # Install Python packages required by xmel-client, the grpc-demo, and
+  # the EV Range Extender VM2 components:
+  #   - eclipse-zenoh + kuksa-client: vm2/zenoh_publisher.py
+  #     (subscribes to VM2's local Kuksa Databroker and forwards values
+  #      over Zenoh to VM1)
+  #   - grpcio + grpcio-tools: grpc-demo (server.py + generate.sh)
   - |
     pip3 install --break-system-packages --ignore-installed \
-      eclipse-zenoh pyyaml jsonschema grpcio grpcio-tools \
+      eclipse-zenoh pyyaml jsonschema grpcio grpcio-tools kuksa-client \
       >> /tmp/xmel-pip.log 2>&1 || \
       echo "WARNING: pip install reported errors, see /tmp/xmel-pip.log" >> /tmp/xmel-pip.log
 

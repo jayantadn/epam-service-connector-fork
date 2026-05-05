@@ -3,6 +3,14 @@
 Minimal Eclipse Zenoh pub/sub demo running between the two QEMU VMs that
 `setup.sh` / `vm2_launch.sh` provision. **VM1 publishes**, **VM2 subscribes**.
 
+> **Not the main project demo.** This folder is a lightweight
+> connectivity smoke-test for `tcp/7447` between the two VMs. The
+> production-style Zenoh use (with VSS payloads bridged into Kuksa
+> Databrokers on both sides) lives in
+> [`../ev-range-extender/`](../ev-range-extender/) — see
+> `ev-range-extender/vm2/zenoh_publisher.py` (publisher) and
+> `ev-range-extender/vm1/zenoh_client.py` (subscriber).
+
 ## Topology
 
 ```
