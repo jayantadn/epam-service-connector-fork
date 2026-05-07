@@ -37,9 +37,9 @@ pairs at the same time or both will write the same VSS values into
 VM1's Kuksa Databroker.
 
 The "Quick start" below has separate **Method 1** and **Method 2**
-blocks at Step 5; everything before that step (host prep, boot, code
-staging) and everything after (the 7-phase demo scenario, shutdown) is
-identical for both transports.
+blocks at Step 5. Everything before that step (host prep, boot, code
+staging) and everything after (the 7-phase demo scenario, shutdown)
+is identical for both transports.
 
 ---
 
@@ -80,7 +80,7 @@ WSL host (192.168.100.1)
   `someip_publisher.py` (Method 1) or `zenoh_publisher.py` (Method 2).
 - **All input signals** are typed into the Kuksa CLI on the appropriate
   VM. There is no Python publisher / sensor simulator anywhere.
-- **Cross-VM transport** is whichever method you picked at Step 5
+- **Cross-VM transport** is whichever method you pick at Step 5
   below. Both stacks (`someipy` and `eclipse-zenoh`) are installed
   and importable on every boot, so switching is just "stop one pair,
   start the other". Don't run both pairs at the same time.
@@ -99,8 +99,8 @@ WSL host (192.168.100.1)
 | `input/user-data-vm2` | Cloud-init for VM2: installs same packages, runs `xmel-start-databroker` to bring up the **same `sdv-runtime` image** with `RUNTIME_NAME=ev-range-cabin` (so VM2's Databroker boots with the standard COVESA VSS catalog already loaded — no JSON files anywhere). |
 | `input/network-vm1.yaml` / `input/network-vm2.yaml` | Static IP for the bridge NIC; DHCP for the SLIRP NIC (outbound internet). |
 | **`ev-range-extender/`** | **The main demo.** See the section below. |
-| `someip-demo/` | A minimal "VM2 -> VM1" SOME/IP pub/sub example. Use it as a connectivity smoke test before running **Method 1**. |
-| `zenoh-demo/` | A minimal "VM1 -> VM2" Zenoh pub/sub example. Use it as a connectivity smoke test before running **Method 2**. |
+| `someip-demo/` | A minimal "VM2 -> VM1" SOME/IP pub/sub example (independent of the EV demo). |
+| `zenoh-demo/` | A minimal "VM1 -> VM2" Zenoh pub/sub example (independent of the EV demo). |
 | `grpc-demo/` | A minimal "VM1 -> VM2" Python gRPC client/server example (independent of the EV demo). |
 | `output/` | Generated qcow2 disks, seed images, base Ubuntu image (gitignored). |
 
@@ -152,11 +152,23 @@ internet (apt, pip, docker pull). SLIRP does not carry IPv6 — see
 
 ---
 
-## Quick start (~10 min on a fresh host)
+## Quick start (~10 min on a fresh host) — fully self-contained
 
-The first four steps and the 7-phase demo (Steps 6-7) are **identical
-for both transports**. Step 5 is where you pick **Method 1 (SOME/IP)**
-or **Method 2 (Zenoh)**.
+Seven numbered steps. Steps 1–4 and 6–7 are **identical for both
+transports**; **Step 5** is where you pick **Method 1 (SOME/IP)** or
+**Method 2 (Zenoh)**. Every command needed to go from a clean host
+to a working end-to-end demo is inline in this section — you should
+never need to leave this README.
+
+| Step | What it does | Shared / per-method |
+|---|---|---|
+| 1 | Host prep (cleanup, install qemu, iptables, ip_forward) | shared |
+| 2 | Provision and boot both VMs (`./setup.sh`) | shared |
+| 3 | Verify SSH + Kuksa Databroker + Python deps on both VMs | shared |
+| 4 | `scp` the `ev-range-extender/` tree onto both VMs | shared |
+| 5 | **Pick** Method 1 (SOME/IP) **or** Method 2 (Zenoh), start the bridge + Kuksa CLIs + range_ai | per-method |
+| 6 | Run the 7-phase scenario | shared |
+| 7 | Shutdown | shared |
 
 ### Step 1 — Host-side prep (once per host / per reboot)
 
@@ -179,8 +191,11 @@ sudo sysctl -w net.ipv4.ip_forward=1
 
 ### Step 2 — Provision and boot both VMs
 
+Run from inside the `qemu-image-creator/` folder of your local clone
+(wherever you cloned the repo to):
+
 ```bash
-cd /home/goutham/Gitrepos/epam-service-connector-fork/eclipse-sdv-blueprint/qemu-image-creator
+cd path/to/eclipse-sdv-blueprint/qemu-image-creator
 chmod +x *.sh
 ./setup.sh
 ```
@@ -215,26 +230,28 @@ package on the affected VM (see "Known issues" section A).
 ### Step 4 — Stage the demo code on both VMs
 
 Copy the `ev-range-extender/` tree (which contains both transport
-implementations) to both VMs:
+implementations + `range_ai.py` + the shared `common/` package) onto
+both VMs from the host. Run this from your local clone of the
+repository:
 
 ```bash
-cd /home/goutham/Gitrepos/epam-service-connector-fork/eclipse-sdv-blueprint/qemu-image-creator
-SSHOPTS="-o StrictHostKeyChecking=accept-new"
+cd path/to/eclipse-sdv-blueprint/qemu-image-creator
 
-sshpass -p 'ubuntu' scp $SSHOPTS -r ev-range-extender ubuntu@192.168.100.10:/home/ubuntu/
-sshpass -p 'ubuntu' scp $SSHOPTS -r ev-range-extender ubuntu@192.168.100.11:/home/ubuntu/
+# Single SSH options string used for every sshpass call.
+# StrictHostKeyChecking=accept-new auto-accepts the first-time key prompt
+# (without it, sshpass exits silently and the scp produces no error).
+SSHOPTS="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
 
-# Strip Windows CRLFs (defensive — fixes "bash\r: No such file or directory")
+sshpass -p 'ubuntu' scp $SSHOPTS -r ev-range-extender ubuntu@192.168.100.10:/home/ubuntu/   # VM1
+sshpass -p 'ubuntu' scp $SSHOPTS -r ev-range-extender ubuntu@192.168.100.11:/home/ubuntu/   # VM2
+
+# Strip Windows CRLF line endings (defensive — fixes
+# "/usr/bin/env: 'bash\r': No such file or directory" and similar).
 sshpass -p 'ubuntu' ssh $SSHOPTS ubuntu@192.168.100.10 \
     "cd /home/ubuntu/ev-range-extender && sed -i 's/\r\$//' vm1/*.py common/*.py"
 sshpass -p 'ubuntu' ssh $SSHOPTS ubuntu@192.168.100.11 \
     "cd /home/ubuntu/ev-range-extender && sed -i 's/\r\$//' vm2/*.py common/*.py"
 ```
-
-> The `-o StrictHostKeyChecking=accept-new` flag is important — without
-> it, `sshpass` cannot answer the very first "yes/no/[fingerprint]?"
-> prompt, the `scp` exits silently, and you end up with empty
-> `/home/ubuntu/ev-range-extender/` on the VMs.
 
 Verify the files landed:
 
@@ -243,10 +260,17 @@ ssh ubuntu@192.168.100.10 'ls /home/ubuntu/ev-range-extender/vm1 /home/ubuntu/ev
 ssh ubuntu@192.168.100.11 'ls /home/ubuntu/ev-range-extender/vm2 /home/ubuntu/ev-range-extender/common'
 ```
 
-VM1 should list `range_ai.py`, `someip_client.py`, `zenoh_client.py`,
-`README.md` plus `__init__.py`, `someip_service.py`. VM2 should list
-`someip_publisher.py`, `zenoh_publisher.py`, `README.md` plus the same
-common files.
+Expected:
+
+- **VM1** lists `range_ai.py`, `someip_client.py`, `zenoh_client.py`,
+  `README.md`, plus `__init__.py`, `someip_service.py`.
+- **VM2** lists `someip_publisher.py`, `zenoh_publisher.py`,
+  `README.md`, plus the same `common/` files.
+
+> **You can place this folder anywhere on the VMs** — only the
+> `ev-range-extender/{common,vm1,vm2}` relative layout matters (the
+> bridge scripts import `from common.someip_service import ...`). The
+> paths used in the rest of this README assume `/home/ubuntu/`.
 
 ### Step 5 — Pick a transport and start the bridge
 
@@ -265,6 +289,11 @@ only for SOME/IP-SD timing; running them in the listed order means C
 sees the publisher's first Offer within ~2 seconds. For Zenoh the
 order is more relaxed (TCP retries until the listener appears).
 
+> **Don't run both methods at once.** Both bridges write the same VSS
+> paths into VM1's Kuksa Databroker, so running them simultaneously
+> causes duplicate writes and duplicate `[range-ai] input :` lines for
+> every publish.
+
 #### Method 1 — SOME/IP (Eclipse SCore)
 
 ```bash
@@ -272,26 +301,34 @@ order is more relaxed (TCP retries until the listener appears).
 ssh ubuntu@192.168.100.11
 cd /home/ubuntu/ev-range-extender/vm2
 python3 someip_publisher.py
-# expected: "Publisher running. Drive values from the Kuksa CLI on VM2 ..."
+# expected: "[someip-pub] Publisher running. Drive values from the Kuksa CLI on VM2 ..."
+```
 
+```bash
 # Terminal C — VM1: SOME/IP client
 ssh ubuntu@192.168.100.10
 cd /home/ubuntu/ev-range-extender/vm1
 python3 someip_client.py
-# expected: "SOME/IP client running. Waiting for offers from VM2."
+# expected: "[someip-cli] SOME/IP client running. Waiting for offers from VM2."
+```
 
+```bash
 # Terminal A — VM1: Range Compute AI
 ssh ubuntu@192.168.100.10
 cd /home/ubuntu/ev-range-extender/vm1
 python3 range_ai.py
-# expected: "output : <waiting for StateOfCharge to be set>"
+# expected: "[range-ai] output : <waiting for StateOfCharge to be set>"
+```
 
-# Terminal B — VM1: Kuksa CLI (battery signals)
+```bash
+# Terminal B — VM1: Kuksa CLI (battery signals on the ev-range broker)
 ssh ubuntu@192.168.100.10
 docker run -it --rm --network host ghcr.io/eclipse-kuksa/kuksa-databroker-cli:main
 # expected: "kuksa.val.v1 >" prompt
+```
 
-# Terminal D1 — VM2: Kuksa CLI (cabin signals)
+```bash
+# Terminal D1 — VM2: Kuksa CLI (cabin signals on the ev-range-cabin broker)
 ssh ubuntu@192.168.100.11
 docker run -it --rm --network host ghcr.io/eclipse-kuksa/kuksa-databroker-cli:main
 # expected: "kuksa.val.v1 >" prompt
@@ -306,32 +343,40 @@ The chain you should see on every VM2 publish:
 | C (`someip-cli`) | `OK <path> = <value> (from someip event 0x800N)` |
 | A (`range-ai`) | `Range = ... km` |
 
-#### Method 2 — Eclipse Zenoh (legacy / reference)
+#### Method 2 — Eclipse Zenoh
 
 ```bash
 # Terminal C — VM1: Zenoh client (start FIRST — it owns the listening socket)
 ssh ubuntu@192.168.100.10
 cd /home/ubuntu/ev-range-extender/vm1
 python3 zenoh_client.py
-# expected: "Zenoh client running. Ctrl+C to stop."
+# expected: "[zenoh-cli] Zenoh client running. Ctrl+C to stop."
+```
 
+```bash
 # Terminal D2 — VM2: Zenoh publisher (connects out to VM1)
 ssh ubuntu@192.168.100.11
 cd /home/ubuntu/ev-range-extender/vm2
 python3 zenoh_publisher.py
-# expected: "Publisher running. Drive values from the Kuksa CLI on VM2 ..."
+# expected: "[zenoh-pub] Publisher running. Drive values from the Kuksa CLI on VM2 ..."
+```
 
+```bash
 # Terminal A — VM1: Range Compute AI
 ssh ubuntu@192.168.100.10
 cd /home/ubuntu/ev-range-extender/vm1
 python3 range_ai.py
-# expected: "output : <waiting for StateOfCharge to be set>"
+# expected: "[range-ai] output : <waiting for StateOfCharge to be set>"
+```
 
-# Terminal B — VM1: Kuksa CLI (battery signals)
+```bash
+# Terminal B — VM1: Kuksa CLI (battery signals on the ev-range broker)
 ssh ubuntu@192.168.100.10
 docker run -it --rm --network host ghcr.io/eclipse-kuksa/kuksa-databroker-cli:main
+```
 
-# Terminal D1 — VM2: Kuksa CLI (cabin signals)
+```bash
+# Terminal D1 — VM2: Kuksa CLI (cabin signals on the ev-range-cabin broker)
 ssh ubuntu@192.168.100.11
 docker run -it --rm --network host ghcr.io/eclipse-kuksa/kuksa-databroker-cli:main
 ```
@@ -345,18 +390,13 @@ The chain you should see on every VM2 publish:
 | C (`zenoh-cli`) | `OK <path> = <value> (from vm2)` |
 | A (`range-ai`) | `Range = ... km` |
 
-> **Don't run both methods at once.** Both bridges write the same VSS
-> paths into VM1's Kuksa Databroker, so running them simultaneously
-> causes duplicate writes and duplicate `[range-ai] input :` lines for
-> every publish.
-
 ### Step 6 — Run the 7-phase scenario (same for both methods)
 
-All `publish` commands go inside the Kuksa CLI prompts. Watch
-Terminal A for the recomputed `Range`. Each phase below has a single
-expected `Range` value; the bridge logs (`[someip-pub]` /
-`[someip-cli]` for Method 1, or `[zenoh-pub]` / `[zenoh-cli]` for
-Method 2) confirm the round trip.
+All `publish` commands go inside the Kuksa CLI prompts (Terminal B
+for battery, Terminal D1 for cabin). Watch Terminal A for the
+recomputed `Range`. The bridge logs (`[someip-pub]` / `[someip-cli]`
+for Method 1, or `[zenoh-pub]` / `[zenoh-cli]` for Method 2) confirm
+the cross-VM round trip.
 
 #### Phase 1 — cold start, fully charged (Terminal B, VM1 CLI)
 
@@ -455,11 +495,15 @@ and [`ev-range-extender/vm2/README.md`](ev-range-extender/vm2/README.md).
 ### Step 7 — Shutdown
 
 ```bash
-# In each Kuksa CLI prompt: Ctrl+D
-# Ctrl+C in Terminals A, C, D2
+# Stop the inner processes:
+#  - In each Kuksa CLI prompt:                    Ctrl+D
+#  - In Terminals A, C, D2 (range_ai + bridges):  Ctrl+C
 
+# Power both VMs off cleanly
 ssh ubuntu@192.168.100.10 'sudo poweroff'
 ssh ubuntu@192.168.100.11 'sudo poweroff'
+
+# Tear down host-side networking and any orphan QEMU
 sudo pkill -9 -f 'qemu-system-x86_64' 2>/dev/null
 sudo ip link delete tap1 2>/dev/null
 sudo ip link delete tap2 2>/dev/null
@@ -570,22 +614,21 @@ For **Method 2 — Zenoh**:
 
 ## Side demos (not required for EV Range Extender)
 
-Each folder ships a self-contained example that can be used as a
-connectivity smoke test:
+Three small, self-contained pub/sub examples ship alongside the main
+demo. They are **not part of the EV Range Extender flow above** —
+each is just a one-shot connectivity check or learning example, with
+its own README.
 
-- **`someip-demo/`** — basic SOME/IP service + client (Eclipse-SCore
-  flavour). VM2 runs `server.py`, VM1 runs `client.py`. Useful to
-  confirm `udp/30490` (SD multicast) + `udp/30509`/`udp/30510`
-  (events) before bringing up the heavier ev-range-extender SOME/IP
-  bridge.
-- **`zenoh-demo/`** — basic Zenoh pub/sub (legacy reference transport).
-  VM1 runs `pub.py`, VM2 runs `sub.py`. Useful to confirm `tcp/7447`
-  reachability between the VMs.
-- **`grpc-demo/`** — basic Python gRPC client/server. VM1 runs
-  `client.py`, VM2 runs `server.py`. Demonstrates both unary and
+- **`someip-demo/`** — bare SOME/IP `Hello` service + client. VM2
+  runs `server.py`, VM1 runs `client.py`. Useful as a connectivity
+  check on `udp/30490`+`udp/30509`+`udp/30510` if Method 1 is not
+  delivering events.
+- **`zenoh-demo/`** — bare Zenoh pub/sub. VM1 runs `pub.py`, VM2
+  runs `sub.py`. Useful as a connectivity check on `tcp/7447` if
+  Method 2 is not delivering samples.
+- **`grpc-demo/`** — basic Python gRPC client/server. VM2 runs
+  `server.py`, VM1 runs `client.py`. Demonstrates both unary and
   server-streaming RPCs over `tcp/50051`.
-
-Each has its own README.
 
 ---
 
