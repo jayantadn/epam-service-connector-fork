@@ -1,3 +1,10 @@
+# Copyright (c) 2026 Eclipse Foundation.
+#
+# This program and the accompanying materials are made available under the
+# terms of the MIT License which is available at
+# https://opensource.org/licenses/MIT.
+#
+# SPDX-License-Identifier: MIT
 """Range Compute AI for the EV Range Extender (runs on VM1).
 
 Connects to the local Kuksa Databroker (the ev-range SDV Runtime
@@ -10,7 +17,7 @@ container on 127.0.0.1:55555) and:
          Vehicle.Powertrain.TractionBattery.CurrentVoltage          (V)
          Vehicle.Powertrain.TractionBattery.StateOfCharge.Current   (%)
 
-         # On VM2's CLI -> Zenoh publisher -> VM1 Zenoh client -> ev-range
+         # On VM2's CLI -> VM2->VM1 bridge (SOME/IP active, Zenoh legacy) -> ev-range
          Vehicle.Cabin.HVAC.AmbientAirTemperature                   (degC)
          Vehicle.Cabin.Seat.Row1.DriverSide.Heating                 (% 0..100)
          Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling          (% -100..100;
@@ -50,8 +57,10 @@ SIGNAL_VOLTAGE = "Vehicle.Powertrain.TractionBattery.CurrentVoltage"
 SIGNAL_SOC     = "Vehicle.Powertrain.TractionBattery.StateOfCharge.Current"
 
 # ---- VM2 cabin signals (driven by Kuksa CLI on VM2) -------------------
-# Reach VM1 via VM2 zenoh_publisher.py -> VM1 zenoh_client.py -> ev-range
-# Kuksa Databroker. Verify in the Kuksa CLI on VM1 with:
+# Reach VM1 via the VM2->VM1 bridge (someip_publisher.py -> someip_client.py
+# is the active transport; zenoh_publisher.py -> zenoh_client.py is the
+# legacy alternative) -> ev-range Kuksa Databroker. Verify in the Kuksa
+# CLI on VM1 with:
 #   metadata Vehicle.Cabin.HVAC.AmbientAirTemperature
 #   metadata Vehicle.Cabin.Seat.Row1.DriverSide.Heating
 #   metadata Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling
@@ -224,7 +233,7 @@ async def run(host: str, port: int) -> None:
         for s in BATTERY_SIGNALS:
             log(f"    - {s}                  (battery, from Kuksa CLI on VM1)")
         for s in CABIN_SIGNALS:
-            log(f"    - {s}   (cabin, from Kuksa CLI on VM2 via zenoh)")
+            log(f"    - {s}   (cabin, from Kuksa CLI on VM2 via VM2->VM1 bridge)")
         log("  Will publish to:")
         log(f"    - {RANGE_SIGNAL}")
         log(

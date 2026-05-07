@@ -202,9 +202,13 @@ runcmd:
   - systemctl restart ssh
 
   # Install Python packages required by xmel-client and Python apps.
+  #   - kuksa-client: ev-range-extender/vm1/range_ai.py + zenoh_client.py + someip_client.py
+  #   - eclipse-zenoh: zenoh-demo/ + ev-range-extender/vm1/zenoh_client.py (legacy/reference path)
+  #   - someipy (>=1.0,<2.0): someip-demo/ + ev-range-extender/vm1/someip_client.py (active SOME/IP / Eclipse-SCore path)
+  #   - grpcio + grpcio-tools: grpc-demo/
   - |
     pip3 install --break-system-packages --ignore-installed kuksa-client grpcio grpcio-tools \
-      eclipse-zenoh pyyaml jsonschema requests packaging \
+      eclipse-zenoh 'someipy>=1.0,<2.0' pyyaml jsonschema requests packaging \
       >> /tmp/xmel-pip.log 2>&1 || \
       echo "WARNING: pip install reported errors, see /tmp/xmel-pip.log" >> /tmp/xmel-pip.log
 

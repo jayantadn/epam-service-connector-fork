@@ -223,13 +223,15 @@ runcmd:
 
   # Install Python packages required by xmel-client, the grpc-demo, and
   # the EV Range Extender VM2 components:
-  #   - eclipse-zenoh + kuksa-client: vm2/zenoh_publisher.py
-  #     (subscribes to VM2's local Kuksa Databroker and forwards values
-  #      over Zenoh to VM1)
+  #   - kuksa-client: vm2/zenoh_publisher.py + vm2/someip_publisher.py
+  #     (both subscribe to VM2's local Kuksa Databroker)
+  #   - eclipse-zenoh: zenoh-demo/ + vm2/zenoh_publisher.py (legacy/reference transport)
+  #   - someipy (>=1.0,<2.0): someip-demo/ + vm2/someip_publisher.py
+  #     (active SOME/IP / Eclipse-SCore transport for the EV Range Extender demo)
   #   - grpcio + grpcio-tools: grpc-demo (server.py + generate.sh)
   - |
     pip3 install --break-system-packages --ignore-installed \
-      eclipse-zenoh pyyaml jsonschema grpcio grpcio-tools kuksa-client \
+      eclipse-zenoh 'someipy>=1.0,<2.0' pyyaml jsonschema grpcio grpcio-tools kuksa-client \
       >> /tmp/xmel-pip.log 2>&1 || \
       echo "WARNING: pip install reported errors, see /tmp/xmel-pip.log" >> /tmp/xmel-pip.log
 
