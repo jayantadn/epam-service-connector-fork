@@ -27,6 +27,12 @@ VM2_IMG="$OUTPUT_DIR/vm2.qcow2"
 SEED1="$OUTPUT_DIR/seed1.img"
 SEED2="$OUTPUT_DIR/seed2.img"
 
+# Composed cloud-init files (template + auto-deployed ev-range-extender code).
+# These are regenerated on every ./setup.sh run so that any local edits to
+# the Python sources under ev-range-extender/ are picked up automatically.
+USERDATA1="$OUTPUT_DIR/user-data-vm1.composed"
+USERDATA2="$OUTPUT_DIR/user-data-vm2.composed"
+
 # -------- CHECK INPUT FILES --------
 if [ ! -f "$INPUT_DIR/user-data-vm1" ] || [ ! -f "$INPUT_DIR/meta-data-vm1" ]; then
     echo "[ERROR] VM1 cloud-init files missing"
@@ -41,7 +47,7 @@ fi
 # -------- INSTALL DEPENDENCIES --------
 echo "[INFO] Installing dependencies..."
 sudo apt update
-sudo apt install -y qemu-system qemu-utils cloud-image-utils wget bridge-utils
+sudo apt install -y qemu-system qemu-utils cloud-image-utils wget bridge-utils python3-yaml
 
 # -------- KVM CHECK --------
 echo "[INFO] Checking KVM..."
@@ -75,10 +81,25 @@ if [ ! -f "$VM2_IMG" ]; then
     qemu-img create -f qcow2 -F qcow2 -b "images/$IMAGE_NAME" "$VM2_IMG" 30G
 fi
 
+# -------- COMPOSE CLOUD-INIT USER-DATA --------
+# Inject the entire ev-range-extender/ Python source tree + the systemd
+# units that auto-start the ECUs (BMS / HVAC / Seat) into the cloud-init
+# user-data. After this step there is no manual scp anywhere; the apps
+# arrive on the VM with the very first boot.
+echo "[INFO] Composing cloud-init user-data with auto-deployed apps..."
+python3 tools/compose_userdata.py \
+    --template "$INPUT_DIR/user-data-vm1" \
+    --output   "$USERDATA1" \
+    --vm       vm1
+python3 tools/compose_userdata.py \
+    --template "$INPUT_DIR/user-data-vm2" \
+    --output   "$USERDATA2" \
+    --vm       vm2
+
 # -------- CREATE SEED IMAGES --------
 echo "[INFO] Creating cloud-init seeds..."
-cloud-localds --network-config "$INPUT_DIR/network-vm1.yaml" "$SEED1" "$INPUT_DIR/user-data-vm1" "$INPUT_DIR/meta-data-vm1"
-cloud-localds --network-config "$INPUT_DIR/network-vm2.yaml" "$SEED2" "$INPUT_DIR/user-data-vm2" "$INPUT_DIR/meta-data-vm2"
+cloud-localds --network-config "$INPUT_DIR/network-vm1.yaml" "$SEED1" "$USERDATA1" "$INPUT_DIR/meta-data-vm1"
+cloud-localds --network-config "$INPUT_DIR/network-vm2.yaml" "$SEED2" "$USERDATA2" "$INPUT_DIR/meta-data-vm2"
 
 echo "======================================"
 echo "[SUCCESS] SETUP COMPLETED"

@@ -148,6 +148,7 @@ sudo iptables -A FORWARD -i br0 -o br0 -j ACCEPT
 
 **Port 7447 already in use on VM2**
 
-The XMEL platform also listens on `7447`. If you have `xmel-platform`
-running on VM2, stop it or pass `--listen tcp/0.0.0.0:7448` to `sub.py`
-and `--peer tcp/192.168.100.11:7448` to `pub.py`.
+`tcp/7447` is the default Zenoh peer port, so any other Zenoh router
+or peer started on VM2 will hold it first. Stop the conflicting
+process, or pass `--listen tcp/0.0.0.0:7448` to `sub.py` and
+`--peer tcp/192.168.100.11:7448` to `pub.py`.

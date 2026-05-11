@@ -30,7 +30,7 @@ packages:
   - libgrpc++-dev
   - docker.io
   - net-tools
-  - iproute2
+  - iproute2   
   - curl
   - python3
   - python3-pip
@@ -39,7 +39,7 @@ packages:
 write_files:
   # Force password SSH login on. Highest-numbered drop-in wins over
   # any default cloud-image overrides (e.g. 60-cloudimg-settings.conf).
-  - path: /etc/ssh/sshd_config.d/99-xmel-pwauth.conf
+  - path: /etc/ssh/sshd_config.d/99-evrange-pwauth.conf
     permissions: '0644'
     owner: root:root
     content: |
@@ -56,17 +56,17 @@ write_files:
   # `--metadata` flag, no manual setup. Only the RUNTIME_NAME is changed
   # (to `ev-range-cabin`) so the digital.auto cloud sync can tell the
   # two VMs apart.
-  - path: /usr/local/bin/xmel-start-databroker
+  - path: /usr/local/bin/evrange-start-databroker
     permissions: '0755'
     owner: root:root
     content: |
       #!/usr/bin/env bash
-      # XMEL Kuksa Databroker startup helper for VM2 (linux-baremetal).
+      # EV Range Extender Kuksa Databroker startup helper for VM2 (linux-baremetal).
       # Runs the same digital.auto SDV Runtime image as VM1 so the
       # standard COVESA VSS catalog is preloaded.
       set -uo pipefail
 
-      LOG_FILE="/tmp/xmel-databroker.log"
+      LOG_FILE="/tmp/evrange-databroker.log"
       CONTAINER="kuksa-databroker"
       IMAGE="ghcr.io/eclipse-autowrx/sdv-runtime:latest"
       RUNTIME_NAME="${RUNTIME_NAME:-ev-range-cabin}"
@@ -173,14 +173,14 @@ write_files:
       main() {
           : > "$LOG_FILE" 2>/dev/null || true
           log "============================================================"
-          log "         XMEL Kuksa Databroker Startup (VM2)"
+          log "    EV Range Extender Kuksa Databroker Startup (VM2)"
           log "============================================================"
           log "Image          : $IMAGE"
           log "Container name : $CONTAINER"
           log "Runtime name   : $RUNTIME_NAME"
           log "Databroker port: $DATABROKER_PORT"
           log "Log file       : $LOG_FILE"
-          log "Re-run         : sudo /usr/local/bin/xmel-start-databroker"
+          log "Re-run         : sudo /usr/local/bin/evrange-start-databroker"
           log "============================================================"
 
           ensure_docker
@@ -197,7 +197,7 @@ write_files:
           fi
           if ! wait_for_databroker; then
               log "Health check failed - container is up but databroker is not responding"
-              log "Try: sudo /usr/local/bin/xmel-start-databroker  (will recreate the container)"
+              log "Try: sudo /usr/local/bin/evrange-start-databroker  (will recreate the container)"
               exit 4
           fi
 
@@ -221,8 +221,7 @@ runcmd:
   # Refresh linker cache for gRPC libs (used by C++ apps).
   - ldconfig
 
-  # Install Python packages required by xmel-client, the grpc-demo, and
-  # the EV Range Extender VM2 components:
+  # Install Python packages required by the EV Range Extender VM2 components:
   #   - kuksa-client: vm2/zenoh_publisher.py + vm2/someip_publisher.py
   #     (both subscribe to VM2's local Kuksa Databroker)
   #   - eclipse-zenoh: zenoh-demo/ + vm2/zenoh_publisher.py (legacy/reference transport)
@@ -232,13 +231,13 @@ runcmd:
   - |
     pip3 install --break-system-packages --ignore-installed \
       eclipse-zenoh 'someipy>=1.0,<2.0' pyyaml jsonschema grpcio grpcio-tools kuksa-client \
-      >> /tmp/xmel-pip.log 2>&1 || \
-      echo "WARNING: pip install reported errors, see /tmp/xmel-pip.log" >> /tmp/xmel-pip.log
+      >> /tmp/evrange-pip.log 2>&1 || \
+      echo "WARNING: pip install reported errors, see /tmp/evrange-pip.log" >> /tmp/evrange-pip.log
 
   # Start the Kuksa Databroker via the helper script. Detach so cloud-init
   # does not block on slow image pulls.
-  - /usr/local/bin/xmel-start-databroker &
+  - /usr/local/bin/evrange-start-databroker &
 
-  # Create apps directory for xmel-client deployments.
+  # Create a generic apps directory for ad-hoc deployments.
   - mkdir -p /home/ubuntu/apps
   - chown -R ubuntu:ubuntu /home/ubuntu/apps

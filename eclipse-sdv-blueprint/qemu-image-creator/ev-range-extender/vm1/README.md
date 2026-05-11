@@ -187,7 +187,7 @@ Provided by the existing cloud-init on VM1:
 | `kuksa-client` Python package | `input/user-data-vm1` `pip3 install ... kuksa-client ...` |
 | `someipy` Python package (>=1.0,<2.0; used by `someip_client.py`) | `input/user-data-vm1` `... 'someipy>=1.0,<2.0' ...` |
 | `eclipse-zenoh` Python package (used by legacy `zenoh_client.py`) | `input/user-data-vm1` `... eclipse-zenoh ...` |
-| Kuksa Databroker on `127.0.0.1:55555` | `xmel-start-runtime` runs `ghcr.io/eclipse-autowrx/sdv-runtime:latest` with `--network host` and `RUNTIME_NAME=ev-range` |
+| Kuksa Databroker on `127.0.0.1:55555` | `evrange-start-runtime` runs `ghcr.io/eclipse-autowrx/sdv-runtime:latest` with `--network host` and `RUNTIME_NAME=ev-range` |
 | Docker (for the Kuksa CLI container) | Cloud-init installs `docker.io` |
 
 Pre-flight sanity checks on VM1:
@@ -601,8 +601,8 @@ The `ev-range` SDV Runtime container is not running or not listening:
 ```bash
 docker ps --filter name=sdv-runtime
 ss -ltn | grep 55555
-tail -n 50 /tmp/xmel-runtime.log
-sudo /usr/local/bin/xmel-start-runtime    # restart if needed
+tail -n 50 /tmp/evrange-runtime.log
+sudo /usr/local/bin/evrange-start-runtime    # restart if needed
 ```
 
 **`publish Vehicle.Powertrain.TractionBattery.* ...` fails with `not_found`**
@@ -631,7 +631,7 @@ The wrong Databroker image is running on VM2. Cloud-init now uses
 `ghcr.io/eclipse-autowrx/sdv-runtime:latest` (same image as VM1, with
 the standard COVESA VSS catalog preloaded). Re-run the helper:
 ```bash
-sudo /usr/local/bin/xmel-start-databroker
+sudo /usr/local/bin/evrange-start-databroker
 ```
 See `ev-range-extender/vm2/README.md` "VSS catalog sanity check" for
 detailed diagnostics.

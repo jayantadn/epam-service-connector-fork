@@ -94,8 +94,8 @@ python3 -c "from kuksa_client.grpc.aio import VSSClient; import someipy, zenoh; 
 
 If the broker is missing or unhealthy, restart it:
 ```bash
-sudo /usr/local/bin/xmel-start-databroker
-tail -n 50 /tmp/xmel-databroker.log
+sudo /usr/local/bin/evrange-start-databroker
+tail -n 50 /tmp/evrange-databroker.log
 ```
 
 If any of `kuksa-client` / `someipy` / `eclipse-zenoh` is missing
@@ -126,7 +126,7 @@ docker inspect --format '{{.Config.Image}}' kuksa-databroker
 # expected: ghcr.io/eclipse-autowrx/sdv-runtime:latest
 ```
 If you see `ghcr.io/eclipse-kuksa/kuksa-databroker:main` (the bare
-image, no preloaded VSS), recreate it via `sudo /usr/local/bin/xmel-start-databroker`
+image, no preloaded VSS), recreate it via `sudo /usr/local/bin/evrange-start-databroker`
 which now uses the right image.
 
 ## Stage the publishers on VM2
@@ -215,7 +215,7 @@ to VM1 and opening a CLI there - that confirms the round-trip.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `publish ... [get metadata] OK Error [Error { code: 404 ... }]` on VM2 CLI | The container is the bare `kuksa-databroker:main` image (no VSS preloaded) instead of `sdv-runtime:latest` | `sudo /usr/local/bin/xmel-start-databroker` (uses the correct image now) |
+| `publish ... [get metadata] OK Error [Error { code: 404 ... }]` on VM2 CLI | The container is the bare `kuksa-databroker:main` image (no VSS preloaded) instead of `sdv-runtime:latest` | `sudo /usr/local/bin/evrange-start-databroker` (uses the correct image now) |
 | VM2 publishes but VM1 sees nothing (SOME/IP) | `someip_client.py` not running on VM1, or `iptables FORWARD -i br0 -o br0 -j ACCEPT` missing on host (also blocks SD multicast) | start the client; add the rule |
 | VM2 publishes but VM1 sees nothing (Zenoh legacy) | `zenoh_client.py` not running on VM1, or same `iptables FORWARD` issue | start the client; add the rule |
 | `range_ai` says `<waiting for StateOfCharge ...>` | You haven't published any `StateOfCharge.Current` from the Kuksa CLI on **VM1** yet | run Phase 1 first |
