@@ -71,18 +71,50 @@ VM_FILES = {
 
 def _systemd_unit(description: str, exec_cmd: str, after_kuksa_helper: str,
                   log_path: str) -> str:
+    # First-boot vs subsequent-boot timing notes:
+    #
+    #   * On the very first boot, cloud-init still has to `pip3 install
+    #     kuksa-client eclipse-zenoh ...` (2-3 min) AND `docker pull
+    #     ghcr.io/eclipse-autowrx/sdv-runtime` (~250 MB, 3-5 min on slow
+    #     links) before the ECU can possibly run.
+    #   * On every later boot those are cached, so the unit starts
+    #     in seconds.
+    #
+    # The unit therefore needs to (a) wait for cloud-init's runcmd phase
+    # to finish (= pip install done), (b) wait for the Kuksa Databroker
+    # to be listening on :55555 (= docker pull + start done), and (c) NOT
+    # trip systemd's start-rate limit while it is patiently waiting for
+    # those things. Without this, first-boot crash-loops put the unit
+    # into `failed (start-limit-hit)` and the user has to start it by
+    # hand - exactly the bug we are fixing here.
+    #
     # `StandardOutput=append:` and `StandardError=append:` redirect both
-    # stdout and stderr of the ExecStart process to a file. systemd opens
-    # the file as PID 1 (root) before ExecStartPre runs, so the resulting
-    # file is `root:root` mode 0644 - world-readable, which means a plain
-    # `tail -f /tmp/ev-range-<name>.log` from the `ubuntu` user works
-    # without sudo. The log lives under /tmp so it is wiped on every
-    # boot - that is by design; for persistent history use
+    # stdout and stderr of the ExecStart process to a file. systemd
+    # opens the file as PID 1 (root) before ExecStartPre runs, so the
+    # resulting file is `root:root` mode 0644 - world-readable, which
+    # means a plain `tail -f /tmp/ev-range-<name>.log` from the `ubuntu`
+    # user works without sudo. The log lives under /tmp so it is wiped
+    # on every boot - that is by design; for persistent history use
     # `journalctl -u <service>`.
+    #
+    # `after_kuksa_helper` ("evrange-start-runtime" / "evrange-start-
+    # databroker") is a /usr/local/bin/ shell script, NOT a systemd
+    # unit, so referencing `<helper>.service` would be a silent no-op.
+    # The real gate is `cloud-final.service` (cloud-init's runcmd
+    # phase) plus the two ExecStartPre wait loops below.
+    _ = after_kuksa_helper  # kept in the signature for callsite clarity
     return f"""[Unit]
 Description={description}
-After=network-online.target {after_kuksa_helper}.service
+# cloud-final.service is cloud-init's runcmd stage. Ordering after it
+# guarantees pip install + the runtime/databroker helper kick-off have
+# completed before we try to import kuksa_client / connect to :55555.
+After=network-online.target cloud-final.service
 Wants=network-online.target
+# Disable systemd's per-unit start-rate limit. On first boot this unit
+# can legitimately need many minutes of retries while docker is still
+# pulling the SDV Runtime image; the default (5 starts in 10 s) would
+# flip the unit to `failed (start-limit-hit)` and stop retrying.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -90,9 +122,16 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/ev-range-extender
 Environment=PYTHONUNBUFFERED=1
-# Wait until the local Kuksa Databroker is listening before starting.
-# kuksa-client otherwise FATALs with "connection refused" on early boot.
-ExecStartPre=/bin/bash -c 'for i in $(seq 1 120); do ss -ltn | grep -q ":55555 " && exit 0; sleep 1; done; exit 1'
+# 1) Wait up to 10 min for the local Kuksa Databroker to start listening
+#    on TCP :55555. First-boot docker-pull of the SDV Runtime image can
+#    take several minutes on slow links; on later boots this returns in
+#    a fraction of a second.
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 600); do ss -ltn 2>/dev/null | grep -q ":55555 " && exit 0; sleep 1; done; exit 1'
+# 2) Wait up to 5 min for the Python deps to actually be importable.
+#    With After=cloud-final.service this is already true on entry, but
+#    we keep the check as a hard safety net so the unit refuses to crash
+#    with ModuleNotFoundError if pip install silently failed earlier.
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 300); do python3 -c "import kuksa_client, zenoh" >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
 ExecStart={exec_cmd}
 StandardOutput=append:{log_path}
 StandardError=append:{log_path}

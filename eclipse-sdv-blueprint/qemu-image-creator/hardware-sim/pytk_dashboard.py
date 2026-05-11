@@ -268,6 +268,27 @@ class Dashboard:
         self.bus = bus
         self.root.title("EV Range Extender - Hardware Simulator")
         self.root.geometry("640x520")
+        # WSLg ships without an X cursor theme by default, which makes the
+        # pointer disappear over Tk windows. Pinning the built-in X11
+        # cursor "left_ptr" forces the server to render the fallback
+        # bitmap that is always available, so the pointer stays visible
+        # regardless of XCURSOR_THEME / Wayland config on the host.
+        try:
+            self.root.config(cursor="left_ptr")
+        except Exception:
+            pass
+        # WSLg also routinely launches new windows BEHIND the terminal
+        # that spawned them, leaving the user wondering where their
+        # dashboard went. Force the window to the front, grab focus,
+        # then drop the topmost flag so it does not stay glued above
+        # everything else once the user has acknowledged it.
+        try:
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+            self.root.after(800, lambda: self.root.attributes("-topmost", False))
+            self.root.focus_force()
+        except Exception:
+            pass
 
         self.status_var = StringVar(value="Ready. Move a slider to publish.")
 
