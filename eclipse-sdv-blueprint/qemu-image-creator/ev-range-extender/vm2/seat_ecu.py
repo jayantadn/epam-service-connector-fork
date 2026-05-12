@@ -30,7 +30,7 @@ End-to-end:
         - Vehicle.Cabin.Seat.Row1.DriverSide.Heating         = int
         - Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling  = int
         |
-        | (zenoh_publisher.py bridge to VM1)
+        | (zenoh_publisher.py forwards over Zenoh to VM1)
         v
     VM1 ev-range Kuksa Databroker
         |

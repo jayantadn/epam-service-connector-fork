@@ -9,24 +9,25 @@ the template already does, also:
      VM under `/home/ubuntu/ev-range-extender/` via cloud-init's
      `write_files` (with base64 encoding so quoting is safe).
 
-  2. Drops six systemd unit files under `/etc/systemd/system/` so the
-     full demo starts automatically on boot:
-       VM1: ev-range-bms.service, ev-range-zenoh-client.service,
-            ev-range-range-ai.service.
-       VM2: ev-range-hvac.service, ev-range-seat.service,
-            ev-range-zenoh-publisher.service.
-     This means a developer never has to `python3 ...` anything on
-     either VM - the only piece they launch by hand is the host
-     PyTk dashboard.
+  2. Drops six systemd unit files under `/etc/systemd/system/` so every
+     Python file deployed onto a VM starts automatically on boot.
+     The user only ever runs `setup.py` (host) and `pytk_dashboard.py`
+     (host); nothing is started by hand inside a VM.
+
+         VM1                              VM2
+         ev-range-bms.service             ev-range-hvac.service
+         ev-range-range-ai.service        ev-range-seat.service
+         ev-range-zenoh-client.service    ev-range-zenoh-publisher.service
 
   3. Adds `runcmd` entries to chown the source tree to ubuntu:ubuntu,
-     reload systemd, and enable+start every matching service.
+     reload systemd, and enable+start every unit in VM_UNITS for the
+     selected VM.
 
 The result is a `#cloud-config` YAML document that `cloud-localds` then
 embeds into the seed image. No manual `scp` is ever needed during the
 demo.
 
-Usage (called by setup.sh; can be run by hand for debugging):
+Usage (called by setup.py; can be run by hand for debugging):
 
     python3 tools/compose_userdata.py \\
         --template input/user-data-vm1 \\
@@ -150,53 +151,55 @@ WantedBy=multi-user.target
 
 VM_UNITS = {
     "vm1": {
-        # Battery Monitoring System ECU - subscribes to dashboard Zenoh
-        # samples and writes battery telemetry into VM1 Kuksa.
+        # Battery Monitoring System: subscribes to host PyTk Zenoh
+        # signals (sim/battery/*) and writes them into VM1's Kuksa.
         "ev-range-bms.service": _systemd_unit(
             description="EV Range Extender - Battery Monitoring System",
             exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm1/bms.py",
             after_kuksa_helper="evrange-start-runtime",
             log_path="/tmp/ev-range-bms.log",
         ),
-        # VM2 -> VM1 Zenoh subscriber. Listens on tcp/0.0.0.0:7447 for
-        # cabin-signal updates from VM2's zenoh_publisher.py and writes
-        # them into VM1 Kuksa so range_ai.py can see them.
-        "ev-range-zenoh-client.service": _systemd_unit(
-            description="EV Range Extender - VM2->VM1 Zenoh Subscriber",
-            exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm1/zenoh_client.py",
-            after_kuksa_helper="evrange-start-runtime",
-            log_path="/tmp/ev-range-zenoh-client.log",
-        ),
-        # Range Compute AI. Subscribes to battery + cabin signals from
-        # VM1 Kuksa and publishes Vehicle.Powertrain.Range back into it.
+        # Range Compute AI: reads Kuksa signals on VM1 (battery + cabin
+        # bridged from VM2) and publishes Vehicle.Powertrain.Range back
+        # to the same broker.
         "ev-range-range-ai.service": _systemd_unit(
             description="EV Range Extender - Range Compute AI",
             exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm1/range_ai.py",
             after_kuksa_helper="evrange-start-runtime",
             log_path="/tmp/ev-range-range-ai.log",
         ),
+        # Zenoh -> Kuksa bridge (VM1 side): receives cabin signals
+        # published by zenoh_publisher.service on VM2 and writes them
+        # into VM1's Kuksa so range_ai.py can use them.
+        "ev-range-zenoh-client.service": _systemd_unit(
+            description="EV Range Extender - VM2->VM1 Zenoh bridge (subscriber)",
+            exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm1/zenoh_client.py",
+            after_kuksa_helper="evrange-start-runtime",
+            log_path="/tmp/ev-range-zenoh-client.log",
+        ),
     },
     "vm2": {
-        # HVAC ECU - subscribes to dashboard Zenoh fan-speed samples,
-        # writes them into VM2 Kuksa.
+        # HVAC ECU: subscribes to host PyTk Zenoh (sim/cabin/*) and
+        # writes Vehicle.Cabin.HVAC.* into VM2's Kuksa.
         "ev-range-hvac.service": _systemd_unit(
             description="EV Range Extender - HVAC ECU",
             exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm2/hvac_ecu.py",
             after_kuksa_helper="evrange-start-databroker",
             log_path="/tmp/ev-range-hvac.log",
         ),
-        # Seat Control Module - subscribes to dashboard Zenoh seat
-        # samples, writes them into VM2 Kuksa.
+        # Seat Control Module: subscribes to host PyTk Zenoh
+        # (sim/seat/*) and writes Vehicle.Cabin.Seat.* into VM2's Kuksa.
         "ev-range-seat.service": _systemd_unit(
             description="EV Range Extender - Seat Control Module",
             exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm2/seat_ecu.py",
             after_kuksa_helper="evrange-start-databroker",
             log_path="/tmp/ev-range-seat.log",
         ),
-        # VM2 -> VM1 Zenoh publisher. Subscribes to cabin signals on VM2
-        # Kuksa and forwards them to VM1's zenoh_client.service.
+        # Kuksa -> Zenoh bridge (VM2 side): forwards VM2's cabin Kuksa
+        # signals over Zenoh so zenoh_client.service on VM1 can ingest
+        # them into VM1's Kuksa for the range model.
         "ev-range-zenoh-publisher.service": _systemd_unit(
-            description="EV Range Extender - VM2->VM1 Zenoh Publisher",
+            description="EV Range Extender - VM2->VM1 Zenoh bridge (publisher)",
             exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm2/zenoh_publisher.py",
             after_kuksa_helper="evrange-start-databroker",
             log_path="/tmp/ev-range-zenoh-publisher.log",

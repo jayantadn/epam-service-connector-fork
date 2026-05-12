@@ -1,17 +1,28 @@
-"""Zenoh client / subscriber (runs on VM1).
+"""Zenoh client / subscriber - runs on VM1.
 
-The receiving half of the VM2 -> VM1 bridge. VM2's `zenoh_publisher.py`
-forwards every Kuksa-CLI publish on VM2 over Zenoh; this client listens
-on tcp/0.0.0.0:7447, decodes each JSON sample and writes the value into
-the local ev-range Kuksa Databroker on 127.0.0.1:55555 - the same
-Databroker that `range_ai.py` subscribes to.
+Auto-deployed onto VM1 by cloud-init. Started automatically by the
+`ev-range-zenoh-client.service` systemd unit on boot.
+
+Role:
+    The receiving half of the VM2 -> VM1 cabin-signal bridge. VM2's
+    `zenoh_publisher.py` forwards every cabin-signal update on VM2
+    over Zenoh; this client listens on tcp/0.0.0.0:7447, decodes
+    each JSON sample and writes the value into the local ev-range
+    Kuksa Databroker on 127.0.0.1:55555 - the same Databroker that
+    `range_ai.py` subscribes to.
 
 End-to-end:
 
-    Kuksa CLI on VM2 -> VM2 Kuksa -> zenoh_publisher.py
+    PyTk dashboard (host) -> hvac_ecu.py / seat_ecu.py (VM2)
+        |
+        v
+    VM2 ev-range-cabin Kuksa Databroker
+        |
+        v
+    zenoh_publisher.py (VM2)
         |
         v   tcp/7447 (zenoh)
-    VM1: zenoh_client.py (this file)
+    zenoh_client.py (this file, VM1)
         zenoh.declare_subscriber("ev-range/vm2/**", listener)
             -> kuksa.set_current_values({path: Datapoint(value)})
         |
@@ -20,6 +31,11 @@ End-to-end:
         |
         v
     range_ai.py (consumes the cabin signals + recomputes Range)
+
+Manual control (when the systemd service is stopped):
+    sudo systemctl stop ev-range-zenoh-client
+    cd /home/ubuntu/ev-range-extender/vm1
+    python3 zenoh_client.py
 """
 
 import argparse
@@ -84,7 +100,7 @@ async def run(listen: str, key_expr: str, kuksa_host: str, kuksa_port: int) -> N
     log(f"Connecting to Kuksa Databroker at {kuksa_host}:{kuksa_port}...")
     async with VSSClient(kuksa_host, kuksa_port) as kuksa:
         log("Connected to Kuksa.")
-        log("Whitelisted VSS paths (VM2 publishes -> client writes here):")
+        log("Whitelisted VSS paths (zenoh_publisher.py on VM2 -> here):")
         for p in BRIDGED_PATHS:
             log(f"    - {p}")
 

@@ -1,294 +1,99 @@
 # EV Range Extender — VM1 (HPC) components
 
-VM1 is the **High-Performance Compute** node. It hosts the
-`digital.auto sdv-runtime` container (Kuksa Databroker on
-`127.0.0.1:55555`, named `ev-range`) plus three Python applications that
-are auto-deployed by cloud-init and auto-started as `systemd` services
-on first boot. **No file is started by hand on VM1.**
+VM1 hosts the digital.auto **SDV Runtime** (`ev-range` Kuksa
+Databroker on `127.0.0.1:55555`) plus three Python services that
+auto-start on every boot via systemd. **You do not run anything on
+VM1 by hand during the demo.**
 
 | Component | File | systemd unit | Role |
 |---|---|---|---|
-| **BMS** | `bms.py` | `ev-range-bms.service` | Listens on `tcp/0.0.0.0:7460` for the host PyTk dashboard's `sim/battery/*` Zenoh keys and writes the values into the **local** `Vehicle.Powertrain.TractionBattery.*` paths in Kuksa. |
-| **Zenoh client (VM2 → VM1 bridge — receiving end)** | `zenoh_client.py` | `ev-range-zenoh-client.service` | Listens on `tcp/0.0.0.0:7447` for cabin samples forwarded by VM2's `zenoh_publisher.py` and writes them into the local Kuksa under their original `Vehicle.Cabin.*` paths. |
-| **Range Compute AI** | `range_ai.py` | `ev-range-range-ai.service` | Subscribes to the 6 input signals on the local Kuksa, recomputes `Vehicle.Powertrain.Range`, publishes it back. |
+| Battery Monitoring System | `bms.py` | `ev-range-bms.service` | Subscribes to host PyTk Zenoh keys (`sim/battery/*`) on `tcp/0.0.0.0:7460` and writes the values into VM1's Kuksa under `Vehicle.Powertrain.TractionBattery.*`. |
+| Range Compute AI | `range_ai.py` | `ev-range-range-ai.service` | Subscribes to 3 battery + 3 cabin signals on VM1's Kuksa, computes range, publishes `Vehicle.Powertrain.Range`. |
+| VM2 → VM1 Zenoh bridge (subscriber) | `zenoh_client.py` | `ev-range-zenoh-client.service` | Listens on `tcp/0.0.0.0:7447` for cabin updates from `zenoh_publisher.py` on VM2 and writes them into VM1's Kuksa so `range_ai.py` can use them. |
 
-All three services depend only on the local Kuksa Databroker on
-`127.0.0.1:55555` and on the Python packages cloud-init installs
-(`kuksa-client`, `eclipse-zenoh`). They use **only Eclipse Zenoh** for
-out-of-broker traffic — there is no SOME/IP, no gRPC, no manual `scp`.
+## VSS signals on VM1's Kuksa
 
-## Signals owned and consumed on VM1
+VM1's Kuksa Databroker is the single source of truth for the demo —
+every signal is collected here and `range_ai.py` reads them all from
+this one broker.
 
-`bms.py` is the **only writer** of the battery branch. `zenoh_client.py`
-is the **only writer** of the cabin branch on VM1 (those writes
-originated on VM2 and were forwarded by VM2's `zenoh_publisher.py`).
-`range_ai.py` is a pure consumer + producer of `Vehicle.Powertrain.Range`.
+| VSS path | Type | Where it comes from |
+|---|---|---|
+| `Vehicle.Powertrain.TractionBattery.CurrentVoltage` | float (V) | host PyTk dashboard → Zenoh → `bms.py` |
+| `Vehicle.Powertrain.TractionBattery.CurrentCurrent` | float (A) | host PyTk dashboard → Zenoh → `bms.py` |
+| `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` | float (%) | host PyTk dashboard → Zenoh → `bms.py` |
+| `Vehicle.Cabin.HVAC.AmbientAirTemperature` | float | host (Fan Speed slider) → `hvac_ecu.py` (VM2) → `zenoh_publisher.py` (VM2) → `zenoh_client.py` (VM1) |
+| `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` | int (% 0..100) | host (Seat Heating toggle) → `seat_ecu.py` (VM2) → bridge → `zenoh_client.py` |
+| `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` | int (% -100..100) | host (Seat Cooling toggle) → `seat_ecu.py` (VM2) → bridge → `zenoh_client.py` |
+| `Vehicle.Powertrain.Range` | uint32 (km) | written by `range_ai.py` |
 
-| VSS path | Type | Unit | Written by | Driven by |
-|---|---|---|---|---|
-| `Vehicle.Powertrain.TractionBattery.CurrentVoltage` | float | V | `bms.py` | Battery Voltage slider on the host dashboard (`sim/battery/voltage`) |
-| `Vehicle.Powertrain.TractionBattery.CurrentCurrent` | float | A | `bms.py` | Battery Current slider (`sim/battery/current`) |
-| `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` | float | % | `bms.py` | Battery % slider (`sim/battery/soc`) |
-| `Vehicle.Cabin.HVAC.Station.Row1.Driver.FanSpeed` | int | % (0..100) | `zenoh_client.py` | Fan Speed slider (host → VM2 `hvac_ecu.py` → VM2 Kuksa → bridge → VM1 Kuksa) |
-| `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` | int | % (0..100) | `zenoh_client.py` | Seat Heating toggle (host → VM2 `seat_ecu.py` → VM2 Kuksa → bridge → VM1 Kuksa) |
-| `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` | int | % (-100..100; negative = vent/cool, positive = heat) | `zenoh_client.py` | Seat Cooling toggle (same path as above) |
-| `Vehicle.Powertrain.Range` | int | km | `range_ai.py` | Computed |
-
-The cabin signals are deliberately **bridged into VM1's Kuksa** rather
-than read directly from VM2 — that keeps `range_ai.py` agnostic of the
-other VM and lets a single Kuksa CLI on VM1 inspect every input it uses.
-
-## End-to-end data flow seen from VM1
-
-```
-HOST (192.168.100.1)                                         VM1 (192.168.100.10)
-hardware-sim/pytk_dashboard.py
-  sim/battery/voltage  ─────zenoh tcp/7460─────▶ bms.py  ──▶ Vehicle.Powertrain.TractionBattery.CurrentVoltage
-  sim/battery/current  ─────zenoh tcp/7460─────▶ bms.py  ──▶ Vehicle.Powertrain.TractionBattery.CurrentCurrent
-  sim/battery/soc      ─────zenoh tcp/7460─────▶ bms.py  ──▶ Vehicle.Powertrain.TractionBattery.StateOfCharge.Current
-                                                                                │
-VM2 (192.168.100.11)                                                            │
-  hvac_ecu.py / seat_ecu.py ──▶ VM2 Kuksa                                       │
-                          │                                                     │
-                          ▼                                                     │
-                 zenoh_publisher.py  ───zenoh tcp/7447───▶ zenoh_client.py  ──▶ Vehicle.Cabin.HVAC.Station.Row1.Driver.FanSpeed
-                                                                            ──▶ Vehicle.Cabin.Seat.Row1.DriverSide.Heating
-                                                                            ──▶ Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling
-                                                                                │
-                                                                                ▼
-                                                                ┌──────────────────────────────────────────────────────┐
-                                                                │  ev-range Kuksa Databroker (127.0.0.1:55555)         │
-                                                                │   3 battery paths   (from bms.py)                    │
-                                                                │   3 cabin   paths   (from zenoh_client.py)           │
-                                                                │   Vehicle.Powertrain.Range  (written by range_ai.py) │
-                                                                └────────────────────────┬─────────────────────────────┘
-                                                                                         │ subscribe_current_values (6 inputs)
-                                                                                         ▼
-                                                                                 range_ai.py
-```
+> **Signal note for the dashboard's "Fan Speed" slider.** The slider
+> publishes 0..100, which lands at
+> `Vehicle.Cabin.HVAC.AmbientAirTemperature`. The six input VSS paths
+> stay exactly as the original signal catalogue defines them; only the
+> *interpretation* of that value is decided by `range_ai.py` (it
+> treats it as fan-speed percent for the demo, so a higher value adds
+> HVAC cabin load and reduces Range).
 
 ## Range model (`range_ai.py`)
 
-The model parameters are constants at the top of `range_ai.py` — change
-them there to model a different vehicle. Defaults match a typical
-~75 kWh passenger EV:
-
-| Constant | Value | Meaning |
-|---|---|---|
-| `BATTERY_CAPACITY_KWH` | 75.0 | Usable pack energy |
-| `NOMINAL_CONSUMPTION_KWH_PER_KM` | 0.18 | Cruise consumption baseline |
-| `NOMINAL_CRUISE_POWER_KW` | 18.0 | Above this the load_factor penalty kicks in |
-| `HVAC_FAN_FULL_KW` | 2.0 | HVAC blower + AC compressor at 100 % fan |
-| `SEAT_HEATER_FULL_KW` | 2.0 | Driver-zone heating budget (seat + footwell + steering) |
-| `SEAT_VENT_FULL_KW` | 0.5 | Driver-zone ventilation/cooling budget |
-| `AVG_SPEED_KMH` | 60.0 | Converts kW cabin load to kWh/km |
-
-Per update (any of the 6 inputs changes):
-
 ```
-available_kWh   = (SoC / 100) * BATTERY_CAPACITY_KWH
-power_kW        = |I * U| / 1000
-consumption     = NOMINAL_CONSUMPTION_KWH_PER_KM
-                * (power_kW / NOMINAL_CRUISE_POWER_KW)   if power_kW > NOMINAL_CRUISE_POWER_KW
-                + cabin_load_kW / AVG_SPEED_KMH
+available_kWh   = (SoC / 100) * 75 kWh
+consumption     = 0.18 kWh/km
+                  * load_factor              (if instantaneous power > 18 kW)
+                  + cabin_load_kW / 60 km/h  (HVAC fan + seat heater + ventilation)
 range_km        = available_kWh / consumption
 ```
 
-Cabin load is purely additive:
+`load_factor = power_kW / 18` whenever `|U·I| / 1000` exceeds the
+18 kW cruise threshold (i.e. roughly above `~48 A` at `380 V`).
+
+`cabin_load_kW` is additive:
 
 ```
-cabin_load_kW =   HVAC_FAN_FULL_KW    * (FanSpeed              / 100)        # FanSpeed in 0..100
-              +   SEAT_HEATER_FULL_KW * (Seat.Heating          / 100)        # Heating in 0..100
-              + ( SEAT_HEATER_FULL_KW * (Seat.HeatingCooling   / 100)  if HC > 0 )
-              + ( SEAT_VENT_FULL_KW   * (-Seat.HeatingCooling  / 100)  if HC < 0 )
+cabin_load_kW = 2.0 * (FanSpeed / 100)                  # 0..2 kW HVAC fan
+              + 2.0 * (Seat.Heating / 100)              # 0..2 kW seat heater
+              + 2.0 * (Seat.HeatingCooling / 100)       # 0..2 kW   if HC > 0
+              + 0.5 * (-Seat.HeatingCooling / 100)      # 0..0.5 kW if HC < 0
 ```
 
-Until `StateOfCharge.Current` has been written at least once, `range_ai`
-logs `<waiting for StateOfCharge to be set>` and publishes nothing. The
-3 cabin signals are optional — if VM2 hasn't sent anything yet
-`cabin_load_kW = 0` and the model falls back to battery-only.
+The dashboard's mutex makes Heating and HeatingCooling
+mutually-exclusive in practice, so the seat terms can't double-count
+when the GUI drives them.
 
-`Vehicle.Powertrain.Range` is declared `Uint32` in the COVESA VSS
-catalog the SDV Runtime ships with, so the value is published as a
-non-negative `int` (km).
+Tweak the constants at the top of `range_ai.py`
+(`BATTERY_CAPACITY_KWH`, `NOMINAL_CONSUMPTION_KWH_PER_KM`,
+`NOMINAL_CRUISE_POWER_KW`, `HVAC_FAN_FULL_KW`, `SEAT_HEATER_FULL_KW`,
+`SEAT_VENT_FULL_KW`, `AVG_SPEED_KMH`) to model a different vehicle.
 
-## Operating the services on VM1
+## Inspect / debug
 
-Everything below assumes you have already run `./setup.sh` on the host;
-the three services start themselves as soon as cloud-init finishes
-installing pip packages and the SDV Runtime container. There is **no
-`python3 …` step** during the demo — only the host PyTk dashboard.
-
-### Status
+All three services log to `/tmp/ev-range-*.log` (world-readable, no
+sudo needed):
 
 ```bash
-ssh ubuntu@192.168.100.10 'systemctl is-active ev-range-bms.service \
-                                                ev-range-zenoh-client.service \
-                                                ev-range-range-ai.service'
-# expected: 3 lines saying "active"
+tail -f /tmp/ev-range-bms.log
+tail -f /tmp/ev-range-range-ai.log
+tail -f /tmp/ev-range-zenoh-client.log
 ```
+
+Status / restart:
 
 ```bash
-ssh ubuntu@192.168.100.10 'ss -ltn | grep -E ":55555|:7447|:7460"'
-# expected lines for: 55555 (Kuksa), 7447 (zenoh_client), 7460 (bms)
+systemctl status   ev-range-bms ev-range-range-ai ev-range-zenoh-client
+sudo systemctl restart ev-range-range-ai
 ```
 
-### Logs
-
-Each service writes its stdout/stderr to a world-readable file under
-`/tmp/`. Plain `tail -f` works without `sudo`:
+To run any of them by hand (with the systemd unit stopped first):
 
 ```bash
-ssh ubuntu@192.168.100.10 'tail -f /tmp/ev-range-bms.log'
-ssh ubuntu@192.168.100.10 'tail -f /tmp/ev-range-zenoh-client.log'
-ssh ubuntu@192.168.100.10 'tail -f /tmp/ev-range-range-ai.log'
-```
-
-For the full systemd journal of any unit:
-
-```bash
-ssh ubuntu@192.168.100.10 'sudo journalctl -u ev-range-range-ai.service -n 80 --no-pager'
-```
-
-### Verify the round-trip from a Kuksa CLI on VM1
-
-If you want to inspect or override values directly on the Databroker
-(no dashboard), you can run the Kuksa CLI ad-hoc:
-
-```bash
-ssh ubuntu@192.168.100.10
-docker run -it --rm --network host \
-    ghcr.io/eclipse-kuksa/kuksa-databroker-cli:main
-```
-
-Inside the CLI:
-
-```text
-metadata Vehicle.Powertrain.TractionBattery.**
-metadata Vehicle.Cabin.HVAC.Station.Row1.Driver.FanSpeed
-metadata Vehicle.Cabin.Seat.Row1.DriverSide.Heating
-metadata Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling
-metadata Vehicle.Powertrain.Range
-
-subscribe Vehicle.Powertrain.Range
-```
-
-Now move a slider on the host dashboard and watch the `Range` line
-update in the CLI.
-
-### Manual restart / one-shot debug run
-
-If you ever need to take a service down (e.g. to run with `--debug` or
-attach a debugger), stop the unit first so it doesn't compete:
-
-```bash
-sudo systemctl stop ev-range-range-ai.service
+sudo systemctl stop ev-range-bms
 cd /home/ubuntu/ev-range-extender/vm1
-python3 range_ai.py
-# ... then:
-sudo systemctl start ev-range-range-ai.service
+python3 bms.py            # all flags have working defaults
 ```
-
-The same pattern works for `bms.py` and `zenoh_client.py`.
-
-## CLI flags
-
-`range_ai.py`:
-
-| Flag | Default | Purpose |
-|---|---|---|
-| `--host` | `127.0.0.1` | Kuksa Databroker host |
-| `--port` | `55555` | Kuksa Databroker port |
-
-`bms.py`:
-
-| Flag | Default | Purpose |
-|---|---|---|
-| `--listen` | `tcp/0.0.0.0:7460` | Zenoh listen endpoint (host dashboard dials it) |
-| `--kuksa-host` | `127.0.0.1` | Local Kuksa Databroker host |
-| `--kuksa-port` | `55555` | Local Kuksa Databroker port |
-
-`zenoh_client.py`:
-
-| Flag | Default | Purpose |
-|---|---|---|
-| `--listen` | `tcp/0.0.0.0:7447` | Zenoh listen endpoint (VM2's publisher dials it) |
-| `--key` | `ev-range/vm2/**` | Zenoh key expression to subscribe to |
-| `--kuksa-host` | `127.0.0.1` | Local Kuksa Databroker host |
-| `--kuksa-port` | `55555` | Local Kuksa Databroker port |
 
 ## Troubleshooting
 
-**A service shows `failed` after `systemctl is-active`**
-
-```bash
-ssh ubuntu@192.168.100.10 'sudo journalctl -u ev-range-bms.service -n 80 --no-pager'
-ssh ubuntu@192.168.100.10 'tail -n 80 /tmp/ev-range-bms.log'
-```
-
-The most common cause is `ExecStartPre` timing out before the SDV
-Runtime container reaches `:55555`. Each unit waits up to 10 minutes
-for `:55555` and 5 minutes for `kuksa-client`/`zenoh` imports, with
-`StartLimitIntervalSec=0`, so it normally reaches `active` even on
-slow links. If it doesn't, the runtime container itself is unhealthy:
-
-```bash
-ssh ubuntu@192.168.100.10 'docker ps --filter name=sdv-runtime'
-ssh ubuntu@192.168.100.10 'tail -n 50 /tmp/evrange-runtime.log'
-ssh ubuntu@192.168.100.10 'sudo /usr/local/bin/evrange-start-runtime'
-```
-
-**`range_ai` keeps printing `<waiting for StateOfCharge to be set>`**
-
-Battery signals haven't reached the Databroker yet. Move the
-**Battery %** slider on the host dashboard. Then check:
-
-```bash
-ssh ubuntu@192.168.100.10 'tail -n 20 /tmp/ev-range-bms.log'
-# expect: [bms] OK Vehicle.Powertrain.TractionBattery.StateOfCharge.Current = ...
-```
-
-If `bms.log` is empty, the Zenoh sample never arrived — check the
-host's `iptables FORWARD` rule and the `--vm1` / `--bms-port` flags
-passed to `pytk_dashboard.py`.
-
-**`Vehicle.Cabin.*` paths show no value**
-
-The cross-VM bridge is broken. Both ends must be `active`:
-
-```bash
-ssh ubuntu@192.168.100.11 'systemctl is-active ev-range-zenoh-publisher.service'
-ssh ubuntu@192.168.100.10 'systemctl is-active ev-range-zenoh-client.service'
-```
-
-From VM2, `nc -zv 192.168.100.10 7447` must succeed (the host needs
-`iptables -A FORWARD -i br0 -o br0 -j ACCEPT`).
-
-**`ModuleNotFoundError: No module named 'kuksa_client'` / `'zenoh'`**
-
-Cloud-init's pip install was incomplete (usually IPv6/SLIRP DNS).
-Reinstall manually on VM1:
-
-```bash
-sudo pip3 install --break-system-packages --ignore-installed \
-    kuksa-client eclipse-zenoh
-sudo systemctl restart ev-range-bms.service \
-                        ev-range-zenoh-client.service \
-                        ev-range-range-ai.service
-```
-
-**`publish ... [get metadata] ... not_found` from a VM1 Kuksa CLI**
-
-The wrong container image is running. Cloud-init now uses
-`ghcr.io/eclipse-autowrx/sdv-runtime:latest` (preloaded with the
-standard COVESA VSS catalog). Verify and recover:
-
-```bash
-ssh ubuntu@192.168.100.10 'docker inspect --format "{{.Config.Image}}" sdv-runtime'
-# expected: ghcr.io/eclipse-autowrx/sdv-runtime:latest
-ssh ubuntu@192.168.100.10 'sudo /usr/local/bin/evrange-start-runtime'
-```
-
-For host-side / cross-VM problems (dashboard, bridge, networking) see
-the **Known issues and workarounds** section of the top-level
-[`README.md`](../../README.md).
+See the top-level [`README.md`](../../README.md) "Troubleshooting"
+section for the common cases (cloud-init hang, tap busy, service
+inactive, dashboard slider with no effect, etc.).

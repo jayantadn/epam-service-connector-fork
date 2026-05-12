@@ -5,27 +5,36 @@ automatically by the `ev-range-hvac.service` systemd unit on boot.
 
 Role:
     The HVAC ECU is the device-side ECU that owns the cabin HVAC
-    branch of the local Kuksa Databroker on VM2. It receives the
-    fan-speed setpoint from the host PyTk hardware simulator
-    (`hardware-sim/pytk_dashboard.py`) over Zenoh and writes it into
-    the local `ev-range-cabin` Kuksa Databroker. From there VM2's
+    branch of the local Kuksa Databroker on VM2. It receives a value
+    from the host PyTk dashboard (`hardware-sim/pytk_dashboard.py`)
+    over Zenoh on `sim/cabin/temp` and writes it into the local
+    `ev-range-cabin` Kuksa Databroker as
+    `Vehicle.Cabin.HVAC.AmbientAirTemperature`. From there VM2's
     `zenoh_publisher.py` bridges the value to VM1's `ev-range` Kuksa,
-    which `range_ai.py` consumes as an additive cabin power load.
+    which `range_ai.py` consumes.
+
+    NOTE on the dashboard label: the slider is labelled "Fan Speed"
+    in the GUI for the demo narrative, but the underlying Zenoh key
+    (`sim/cabin/temp`) and the VSS path
+    (`Vehicle.Cabin.HVAC.AmbientAirTemperature`) are deliberately
+    kept exactly as the original signal catalogue defines them. The
+    range model on VM1 interprets the numeric value as fan-speed
+    percent for the demo - see `vm1/range_ai.py` for the math.
 
 End-to-end:
 
     pytk_dashboard.py (host, 192.168.100.1)
         |
         | zenoh.put on:
-        |   sim/cabin/fan-speed   (uint8, 0..100 percent)
+        |   sim/cabin/temp  (float, 0..100)
         v   tcp/192.168.100.11:7461
     hvac_ecu.py (this file, VM2)
         |
         v
     VM2 ev-range-cabin Kuksa Databroker (127.0.0.1:55555)
-        - Vehicle.Cabin.HVAC.Station.Row1.Driver.FanSpeed = int
+        - Vehicle.Cabin.HVAC.AmbientAirTemperature = float
         |
-        | (zenoh_publisher.py bridge)
+        | (zenoh_publisher.py forwards over Zenoh to VM1)
         v
     VM1 ev-range Kuksa Databroker
         |
@@ -60,15 +69,13 @@ DEFAULT_KUKSA_PORT = 55555
 
 
 KEY_TO_VSS = {
-    "sim/cabin/fan-speed": (
-        # COVESA VSS uint8 0..100 (% of max blower power). The HVAC
-        # ECU just mirrors whatever the dashboard publishes.
-        "Vehicle.Cabin.HVAC.Station.Row1.Driver.FanSpeed",
-        int,
+    "sim/cabin/temp": (
+        "Vehicle.Cabin.HVAC.AmbientAirTemperature",
+        float,
     ),
 }
 
-KEY_PREFIX = "sim/cabin/fan-speed"
+KEY_PREFIX = "sim/cabin/temp"
 
 
 def log(msg: str) -> None:
@@ -142,7 +149,7 @@ async def run(listen: str, kuksa_host: str, kuksa_port: int) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="HVAC ECU on VM2. Listens on a Zenoh endpoint for "
-                    "sim/cabin/fan-speed samples driven by the host PyTk "
+                    "sim/cabin/temp samples driven by the host PyTk "
                     "dashboard, and writes the values into the local "
                     "ev-range-cabin Kuksa Databroker."
     )
