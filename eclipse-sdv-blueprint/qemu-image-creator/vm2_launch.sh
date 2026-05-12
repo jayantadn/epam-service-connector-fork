@@ -29,6 +29,8 @@ else
     CPU_FLAG="-cpu qemu64"
 fi
 
+echo "Starting VM2 silently in the background..."
+
 qemu-system-x86_64 \
     $KVM_FLAG \
     $CPU_FLAG \

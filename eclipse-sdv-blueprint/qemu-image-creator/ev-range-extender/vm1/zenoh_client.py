@@ -60,8 +60,14 @@ DEFAULT_KUKSA_PORT = 55555
 # handing it to Kuksa. Kuksa rejects writes with a type mismatch, so
 # the casts here mirror the VSS `datatype` (int8 -> int, float -> float).
 # Keep this in sync with vm2/zenoh_publisher.py BRIDGED_PATHS.
+#
+# The HVAC fan-speed signal is intentionally carried on the existing
+# `Vehicle.Cabin.HVAC.AmbientAirTemperature` path (a float); the
+# dashboard relabels it "Fan Speed" but the VSS path and `hvac_ecu.py`
+# / `zenoh_publisher.py` / `range_ai.py` all stay on this canonical
+# path. See vm1/range_ai.py "HVAC NOTE" for the rationale.
 BRIDGED_PATHS = {
-    "Vehicle.Cabin.HVAC.Station.Row1.Driver.FanSpeed":     int,    # actuator, uint8, percent
+    "Vehicle.Cabin.HVAC.AmbientAirTemperature":            float,  # sensor, float, reused as fan-speed %
     "Vehicle.Cabin.Seat.Row1.DriverSide.Heating":          int,    # actuator, int8, percent
     "Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling":   int,    # actuator, int8, percent
 }
