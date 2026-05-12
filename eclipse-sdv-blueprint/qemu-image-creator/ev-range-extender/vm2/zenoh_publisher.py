@@ -1,44 +1,60 @@
 """Zenoh publisher (runs on VM2).
 
-Subscribes to VM2's local Kuksa Databroker for the cabin signals the
-user drives via the Kuksa CLI on VM2, then republishes each update as
-a JSON payload on Zenoh so VM1's `zenoh_client.py` can mirror it into
-the ev-range Databroker that `range_ai.py` consumes.
+The sending half of the VM2 -> VM1 cabin bridge. Auto-deployed onto
+VM2 by cloud-init (no manual scp). Started automatically by the
+`ev-range-zenoh-publisher.service` systemd unit on boot.
 
-End-to-end (no Python publisher anywhere - the Kuksa CLI is the only
-source of truth for input signals):
+Role:
+    Subscribes to VM2's local Kuksa Databroker for the three cabin
+    paths owned by hvac_ecu.py and seat_ecu.py, then republishes each
+    update as a JSON payload on Zenoh so VM1's `zenoh_client.py` can
+    mirror it into the ev-range Databroker that `range_ai.py`
+    consumes. The payload carries the original VSS path so the value
+    lands at the same address on both sides of the bridge.
 
-    Kuksa CLI on VM2  --publish-->  VM2 Kuksa Databroker (127.0.0.1:55555)
-                                            |
-                                            | subscribe_current_values
-                                            v
+End-to-end (the host PyTk dashboard is the only source of truth for
+input signals; this bridge just ferries the cabin paths VM2 -> VM1):
+
+    pytk_dashboard.py (host) --zenoh--> hvac_ecu.py / seat_ecu.py (VM2)
+                                                |
+                                                v
+                                  VM2 Kuksa Databroker (127.0.0.1:55555)
+                                                |
+                                                | subscribe_current_values
+                                                v
                                   zenoh_publisher.py (this file)
-                                            |
-                                            | zenoh.put(JSON)
-                                            v   tcp/192.168.100.10:7447
+                                                |
+                                                | zenoh.put(JSON)
+                                                v   tcp/192.168.100.10:7447
                                   VM1 zenoh_client.py
-                                            |
-                                            v
+                                                |
+                                                v
                                   VM1 ev-range Kuksa Databroker
-                                            |
-                                            v
+                                                |
+                                                v
                                   range_ai.py (recomputes Range)
 
-Bridged signals (each must exist in VM2's Kuksa VSS catalog - load the
-EPAM JSON with `--metadata` when starting the broker, see vm2/README.md):
+Bridged signals (each must exist in VM2's Kuksa VSS catalog - the
+standard COVESA VSS that ships with the sdv-runtime image already
+covers all three):
 
-    Vehicle.Cabin.HVAC.AmbientAirTemperature        (sensor, float, celsius)
+    Vehicle.Cabin.HVAC.Station.Row1.Driver.FanSpeed (actuator, uint8, percent)
     Vehicle.Cabin.Seat.Row1.DriverSide.Heating      (actuator, int8, percent)
     Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling
                                                     (actuator, int8, percent;
                                                      negative = cooling/ventilation,
                                                      positive = heating)
 
-Prerequisites on VM2:
-  * Kuksa Databroker running on 127.0.0.1:55555 with the EPAM/COVESA
-    VSS catalog loaded (see ev-range-extender/vm2/README.md for the
-    one-time `--metadata` setup).
+Prerequisites on VM2 (all provided by cloud-init / systemd):
+  * Kuksa Databroker on 127.0.0.1:55555 (sdv-runtime image; the
+    standard COVESA VSS catalog is preloaded - no `--metadata` step).
   * eclipse-zenoh + kuksa-client Python packages.
+
+Manual control (when the systemd service is stopped):
+    sudo systemctl stop ev-range-zenoh-publisher
+    cd /home/ubuntu/ev-range-extender/vm2
+    python3 zenoh_publisher.py
+    python3 zenoh_publisher.py --zenoh-peer tcp/192.168.100.10:7447
 """
 
 import argparse
@@ -63,9 +79,9 @@ DEFAULT_ZENOH_PEER = "tcp/192.168.100.10:7447"
 # adding it to VM1 will silently no-op (the client logs "ignoring
 # unknown path"). Keep them in sync.
 BRIDGED_PATHS = {
-    "Vehicle.Cabin.HVAC.AmbientAirTemperature": (
-        "ev-range/vm2/cabin/Vehicle.Cabin.HVAC.AmbientAirTemperature",
-        "celsius",
+    "Vehicle.Cabin.HVAC.Station.Row1.Driver.FanSpeed": (
+        "ev-range/vm2/cabin/Vehicle.Cabin.HVAC.Station.Row1.Driver.FanSpeed",
+        "percent",
     ),
     "Vehicle.Cabin.Seat.Row1.DriverSide.Heating": (
         "ev-range/vm2/seat/Vehicle.Cabin.Seat.Row1.DriverSide.Heating",
@@ -118,9 +134,10 @@ async def run(kuksa_host: str, kuksa_port: int, zenoh_peer: str) -> None:
                 for path, (zk, _u) in BRIDGED_PATHS.items()
             }
             log(
-                "Publisher running. Drive values from the Kuksa CLI on VM2 "
-                "(e.g. `publish Vehicle.Cabin.HVAC.AmbientAirTemperature 22.0`). "
-                "Ctrl+C to stop."
+                "Publisher running. Source of truth for cabin signals is "
+                "the host PyTk dashboard, which writes them into VM2's "
+                "Kuksa via hvac_ecu.py / seat_ecu.py - this bridge then "
+                "forwards every change to VM1. Ctrl+C to stop."
             )
 
             paths = list(BRIDGED_PATHS.keys())

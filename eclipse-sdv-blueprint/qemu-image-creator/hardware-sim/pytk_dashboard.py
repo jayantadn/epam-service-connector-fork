@@ -1,15 +1,16 @@
 """Hardware Simulator dashboard - runs on the host (PyTk).
 
 Tk GUI that replaces the manual Kuksa CLI workflow during the EV
-Range Extender demo. Six sliders + numeric spinboxes, one Zenoh
-session that dials the three ECUs:
+Range Extender demo. Sliders for the battery + fan speed and on/off
+toggles for seat heating/cooling, all driven by one Zenoh session
+that dials the three ECUs:
 
-    sim/battery/voltage   ->  bms.py  on VM1   (tcp/192.168.100.10:7460)
-    sim/battery/current   ->  bms.py  on VM1   (same)
-    sim/battery/soc       ->  bms.py  on VM1   (same)
-    sim/cabin/temp        ->  hvac_ecu.py  on VM2   (tcp/192.168.100.11:7461)
-    sim/cabin/seat/heating-> seat_ecu.py  on VM2   (tcp/192.168.100.11:7462)
-    sim/cabin/seat/hc     -> seat_ecu.py  on VM2   (same)
+    sim/battery/voltage     ->  bms.py       VM1   (tcp/192.168.100.10:7460)
+    sim/battery/current     ->  bms.py       VM1   (same)
+    sim/battery/soc         ->  bms.py       VM1   (same)
+    sim/cabin/fan-speed     ->  hvac_ecu.py  VM2   (tcp/192.168.100.11:7461)
+    sim/cabin/seat/heating  ->  seat_ecu.py  VM2   (tcp/192.168.100.11:7462)
+    sim/cabin/seat/hc       ->  seat_ecu.py  VM2   (same)
 
 Each Zenoh sample is a tiny JSON payload:
     {"value": <number>, "source": "<host>", "ts": "<iso>"}
@@ -40,7 +41,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from tkinter import Frame, IntVar, StringVar, Tk, ttk
+from tkinter import BooleanVar, Frame, IntVar, StringVar, Tk, ttk
 from typing import Callable
 
 import zenoh
@@ -60,10 +61,20 @@ class Signal:
     `display`   user-facing label
     `key`       Zenoh key the ECU subscribes to
     `unit`      shown after the value
-    `vmin/vmax` slider range
-    `step`      spinbox step (also slider resolution)
+    `vmin/vmax` slider range (ignored when `is_toggle`)
+    `step`      spinbox step / slider resolution (ignored when `is_toggle`)
     `default`   initial value
-    `is_int`    True for VSS int8 signals (Heating, HeatingCooling)
+    `is_int`    True for VSS int8/uint8 signals
+    `is_toggle` True to render as a checkbox instead of a slider+spinbox.
+                When set, the row publishes `on_value` when the checkbox
+                is ticked and `off_value` when it is unticked.
+    `on_value`  value sent on toggle ON  (only when `is_toggle`)
+    `off_value` value sent on toggle OFF (only when `is_toggle`)
+    `group`     non-empty string for mutually-exclusive toggle groups.
+                Turning any toggle ON in a group automatically turns OFF
+                every other toggle that shares the same `group` value
+                (and publishes their `off_value`, so the receiving ECU
+                also sees the change). Ignored for sliders.
     """
 
     display: str
@@ -74,6 +85,10 @@ class Signal:
     step: float
     default: float
     is_int: bool = False
+    is_toggle: bool = False
+    on_value: float = 0
+    off_value: float = 0
+    group: str = ""
 
 
 # ---------------------------------------------------------------------
@@ -82,18 +97,38 @@ class Signal:
 #   - vm2/hvac_ecu.py   KEY_TO_VSS
 #   - vm2/seat_ecu.py   KEY_TO_VSS
 # ---------------------------------------------------------------------
+#
+# Battery ranges reflect a typical passenger EV high-voltage pack
+# (~400 V Li-ion, ~75 kWh): nominal voltage band 320..420 V; current
+# 0..200 A on traction discharge only (regen / charging is intentionally
+# not exposed on the dashboard - all dashboard inputs are non-negative).
 
 BATTERY_SIGNALS = (
-    Signal("Battery Voltage",          "sim/battery/voltage", "V",  200.0, 450.0, 1.0, 400.0),
-    Signal("Battery Current",          "sim/battery/current", "A", -200.0, 300.0, 0.5,  25.5),
-    Signal("Battery SoC",              "sim/battery/soc",     "%",    0.0, 100.0, 1.0,  80.0),
+    Signal("Battery Voltage",      "sim/battery/voltage", "V",  320.0, 420.0, 1.0, 400.0),
+    Signal("Battery Current",      "sim/battery/current", "A",    0.0, 200.0, 1.0,  25.0),
+    Signal("Battery %",            "sim/battery/soc",     "%",    0.0, 100.0, 1.0,  80.0),
 )
+# HVAC: a single Fan Speed slider (0..100 %). Drives the AC blower load
+# in the Range AI consumption model. Replaces the old "Cabin Ambient
+# Temp" slider so the dashboard maps 1:1 to controls a real driver
+# would touch.
 HVAC_SIGNALS = (
-    Signal("Cabin Ambient Temp",       "sim/cabin/temp",      "\u00b0C", -30.0, 50.0, 0.5, 22.0),
+    Signal("Fan Speed",            "sim/cabin/fan-speed", "%",    0.0, 100.0, 1.0,   0.0,
+           is_int=True),
 )
+# Seat: simple on/off toggles. Heating ON publishes 100 %, Cooling ON
+# publishes -100 % (the Heating/Cooling VSS path is bidirectional;
+# negative = ventilation/cooling). Both belong to the same `group`,
+# making them mutually exclusive on the dashboard - turning Heating ON
+# auto-clears Cooling and vice versa, and the cleared toggle's
+# off_value is published so the ECU on VM2 also stops the action.
 SEAT_SIGNALS = (
-    Signal("Seat Heating",             "sim/cabin/seat/heating", "%",  0,   100, 1, 0,   is_int=True),
-    Signal("Seat Heating-Cooling",     "sim/cabin/seat/hc",      "%", -100, 100, 1, 0,   is_int=True),
+    Signal("Seat Heating",         "sim/cabin/seat/heating", "",  0,   100, 1, 0,
+           is_int=True, is_toggle=True, on_value=100,  off_value=0,
+           group="seat-thermal"),
+    Signal("Seat Cooling",         "sim/cabin/seat/hc",      "", -100, 100, 1, 0,
+           is_int=True, is_toggle=True, on_value=-100, off_value=0,
+           group="seat-thermal"),
 )
 
 ALL_SECTIONS = (
@@ -169,18 +204,73 @@ class ZenohBus:
 
 
 class SignalRow:
-    """One slider + spinbox pair, wired to a publish callback."""
+    """One row in the dashboard - a slider+spinbox or a checkbox toggle.
+
+    Which widget set is rendered is decided by `Signal.is_toggle`:
+      * False (default) -> slider + numeric spinbox + unit label.
+      * True            -> single checkbox; ticking publishes
+                           `Signal.on_value`, unticking publishes
+                           `Signal.off_value`.
+    """
 
     def __init__(self, parent: Frame, sig: Signal, publish: Callable[[Signal, float], None]) -> None:
         self.sig = sig
         self.publish = publish
-        self.var = IntVar(value=int(round(sig.default))) if sig.is_int else None
-        self._float = sig.default
         self._building = True
 
         ttk.Label(parent, text=sig.display, width=24).grid(row=0, column=0, sticky="w", padx=(8, 4), pady=4)
 
-        # Slider
+        if sig.is_toggle:
+            self._build_toggle(parent)
+        else:
+            self._build_slider(parent)
+
+        parent.columnconfigure(1, weight=1)
+        self._building = False
+
+    # -- toggle (checkbox) ------------------------------------------------
+    def _build_toggle(self, parent: Frame) -> None:
+        self.bool_var = BooleanVar(value=bool(self.sig.default))
+        self.check = ttk.Checkbutton(
+            parent,
+            text="ON",
+            variable=self.bool_var,
+            command=self._on_toggle,
+        )
+        # Span the slider + spinbox + unit columns so the layout stays
+        # aligned with the slider rows above.
+        self.check.grid(row=0, column=1, columnspan=3, sticky="w", padx=4, pady=4)
+
+    def _on_toggle(self) -> None:
+        if self._building:
+            return
+        value = self.sig.on_value if self.bool_var.get() else self.sig.off_value
+        if self.sig.is_int:
+            value = int(round(value))
+        self.publish(self.sig, value)
+
+    def force_toggle_off(self) -> bool:
+        """Programmatically clear the checkbox without firing _on_toggle.
+
+        Returns True if the toggle was actually ON before the call (so
+        the caller can decide whether to publish the off_value), False
+        if it was already off / not a toggle.
+        """
+        if not self.sig.is_toggle:
+            return False
+        was_on = bool(self.bool_var.get())
+        if was_on:
+            # BooleanVar.set() does NOT trigger ttk.Checkbutton.command,
+            # so we are free to mutate state without recursion.
+            self.bool_var.set(False)
+        return was_on
+
+    # -- slider + spinbox -------------------------------------------------
+    def _build_slider(self, parent: Frame) -> None:
+        sig = self.sig
+        self.var = IntVar(value=int(round(sig.default))) if sig.is_int else None
+        self._float = sig.default
+
         self.scale = ttk.Scale(
             parent,
             from_=sig.vmin,
@@ -192,7 +282,6 @@ class SignalRow:
         self.scale.set(sig.default)
         self.scale.grid(row=0, column=1, sticky="we", padx=4, pady=4)
 
-        # Spinbox (numeric) - shows / lets user type a precise value
         increment = sig.step if sig.step else (1 if sig.is_int else 0.1)
         if sig.is_int:
             self.spin = ttk.Spinbox(
@@ -220,9 +309,6 @@ class SignalRow:
         self.spin.grid(row=0, column=2, sticky="e", padx=4, pady=4)
 
         ttk.Label(parent, text=sig.unit, width=4).grid(row=0, column=3, sticky="w", padx=(0, 8), pady=4)
-
-        parent.columnconfigure(1, weight=1)
-        self._building = False
 
     def _on_scale(self, raw: str) -> None:
         if self._building:
@@ -290,7 +376,11 @@ class Dashboard:
         except Exception:
             pass
 
-        self.status_var = StringVar(value="Ready. Move a slider to publish.")
+        self.status_var = StringVar(value="Ready. Move a slider or click a toggle to publish.")
+
+        # Track every SignalRow we create so _publish() can implement
+        # toggle-group mutual exclusion (see _enforce_toggle_group).
+        self._rows: list[tuple[Signal, SignalRow]] = []
 
         for section_title, sigs in ALL_SECTIONS:
             frame = ttk.LabelFrame(root, text=section_title, padding=(8, 6))
@@ -298,7 +388,7 @@ class Dashboard:
             for sig in sigs:
                 row = Frame(frame)
                 row.pack(fill="x", expand=True)
-                SignalRow(row, sig, self._publish)
+                self._rows.append((sig, SignalRow(row, sig, self._publish)))
 
         # Status bar
         status = ttk.Frame(root, padding=(8, 4))
@@ -307,15 +397,49 @@ class Dashboard:
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    # ------------------------------------------------------------------
+    # Publish + UI side-effects
+    # ------------------------------------------------------------------
+    def _emit(self, sig: Signal, value: float | int) -> None:
+        """Send to the Zenoh bus only - no UI side effects, no recursion."""
+        self.bus.put(sig.key, value)
+
+    def _enforce_toggle_group(self, sig: Signal, value: float | int) -> list[str]:
+        """If `sig` is a toggle going ON in a non-empty group, switch
+        every other ON toggle in the same group to OFF and publish their
+        off_value to the bus. Returns the human-readable display names of
+        the toggles that were auto-cleared (for the status bar)."""
+        cleared: list[str] = []
+        if not (sig.is_toggle and sig.group and value == sig.on_value):
+            return cleared
+        for other_sig, other_row in self._rows:
+            if other_sig is sig:
+                continue
+            if not other_sig.is_toggle or other_sig.group != sig.group:
+                continue
+            if other_row.force_toggle_off():
+                # Was ON, now we cleared the box - tell the ECU too.
+                self._emit(other_sig, other_sig.off_value)
+                cleared.append(other_sig.display)
+        return cleared
+
     def _publish(self, sig: Signal, value: float | int) -> None:
         try:
-            self.bus.put(sig.key, value)
+            cleared = self._enforce_toggle_group(sig, value)
+            self._emit(sig, value)
+
             ts = datetime.now().strftime("%H:%M:%S")
             unit = sig.unit
-            if sig.is_int:
-                self.status_var.set(f"[{ts}]  PUT {sig.key} = {int(value)} {unit}")
+            if sig.is_toggle:
+                state = "ON" if value == sig.on_value else "OFF"
+                msg = f"[{ts}]  PUT {sig.key} = {state} ({int(value)})"
+                if cleared:
+                    msg += "  | auto-OFF: " + ", ".join(cleared)
+            elif sig.is_int:
+                msg = f"[{ts}]  PUT {sig.key} = {int(value)} {unit}"
             else:
-                self.status_var.set(f"[{ts}]  PUT {sig.key} = {value:.2f} {unit}")
+                msg = f"[{ts}]  PUT {sig.key} = {value:.2f} {unit}"
+            self.status_var.set(msg)
         except Exception as exc:
             ts = datetime.now().strftime("%H:%M:%S")
             self.status_var.set(f"[{ts}]  ERROR publishing {sig.key}: {exc}")

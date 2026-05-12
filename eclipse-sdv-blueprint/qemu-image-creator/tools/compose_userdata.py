@@ -9,13 +9,18 @@ the template already does, also:
      VM under `/home/ubuntu/ev-range-extender/` via cloud-init's
      `write_files` (with base64 encoding so quoting is safe).
 
-  2. Drops three systemd unit files under `/etc/systemd/system/` for the
-     three new ECUs (`ev-range-bms.service` on VM1; `ev-range-hvac.service`
-     + `ev-range-seat.service` on VM2) so they start automatically on
-     boot.
+  2. Drops six systemd unit files under `/etc/systemd/system/` so the
+     full demo starts automatically on boot:
+       VM1: ev-range-bms.service, ev-range-zenoh-client.service,
+            ev-range-range-ai.service.
+       VM2: ev-range-hvac.service, ev-range-seat.service,
+            ev-range-zenoh-publisher.service.
+     This means a developer never has to `python3 ...` anything on
+     either VM - the only piece they launch by hand is the host
+     PyTk dashboard.
 
   3. Adds `runcmd` entries to chown the source tree to ubuntu:ubuntu,
-     reload systemd, and enable+start the matching ECU services.
+     reload systemd, and enable+start every matching service.
 
 The result is a `#cloud-config` YAML document that `cloud-localds` then
 embeds into the seed image. No manual `scp` is ever needed during the
@@ -145,25 +150,56 @@ WantedBy=multi-user.target
 
 VM_UNITS = {
     "vm1": {
+        # Battery Monitoring System ECU - subscribes to dashboard Zenoh
+        # samples and writes battery telemetry into VM1 Kuksa.
         "ev-range-bms.service": _systemd_unit(
             description="EV Range Extender - Battery Monitoring System",
             exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm1/bms.py",
             after_kuksa_helper="evrange-start-runtime",
             log_path="/tmp/ev-range-bms.log",
         ),
+        # VM2 -> VM1 Zenoh subscriber. Listens on tcp/0.0.0.0:7447 for
+        # cabin-signal updates from VM2's zenoh_publisher.py and writes
+        # them into VM1 Kuksa so range_ai.py can see them.
+        "ev-range-zenoh-client.service": _systemd_unit(
+            description="EV Range Extender - VM2->VM1 Zenoh Subscriber",
+            exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm1/zenoh_client.py",
+            after_kuksa_helper="evrange-start-runtime",
+            log_path="/tmp/ev-range-zenoh-client.log",
+        ),
+        # Range Compute AI. Subscribes to battery + cabin signals from
+        # VM1 Kuksa and publishes Vehicle.Powertrain.Range back into it.
+        "ev-range-range-ai.service": _systemd_unit(
+            description="EV Range Extender - Range Compute AI",
+            exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm1/range_ai.py",
+            after_kuksa_helper="evrange-start-runtime",
+            log_path="/tmp/ev-range-range-ai.log",
+        ),
     },
     "vm2": {
+        # HVAC ECU - subscribes to dashboard Zenoh fan-speed samples,
+        # writes them into VM2 Kuksa.
         "ev-range-hvac.service": _systemd_unit(
             description="EV Range Extender - HVAC ECU",
             exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm2/hvac_ecu.py",
             after_kuksa_helper="evrange-start-databroker",
             log_path="/tmp/ev-range-hvac.log",
         ),
+        # Seat Control Module - subscribes to dashboard Zenoh seat
+        # samples, writes them into VM2 Kuksa.
         "ev-range-seat.service": _systemd_unit(
             description="EV Range Extender - Seat Control Module",
             exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm2/seat_ecu.py",
             after_kuksa_helper="evrange-start-databroker",
             log_path="/tmp/ev-range-seat.log",
+        ),
+        # VM2 -> VM1 Zenoh publisher. Subscribes to cabin signals on VM2
+        # Kuksa and forwards them to VM1's zenoh_client.service.
+        "ev-range-zenoh-publisher.service": _systemd_unit(
+            description="EV Range Extender - VM2->VM1 Zenoh Publisher",
+            exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm2/zenoh_publisher.py",
+            after_kuksa_helper="evrange-start-databroker",
+            log_path="/tmp/ev-range-zenoh-publisher.log",
         ),
     },
 }

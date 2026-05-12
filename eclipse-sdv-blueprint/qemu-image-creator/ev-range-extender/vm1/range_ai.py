@@ -10,15 +10,16 @@
 Connects to the local Kuksa Databroker (the ev-range SDV Runtime
 container on 127.0.0.1:55555) and:
 
-  1. Subscribes to five input signals - all driven by the Kuksa CLI:
+  1. Subscribes to six input signals - all driven by the host PyTk
+     dashboard via the BMS / HVAC / Seat ECUs:
 
-         # On VM1's CLI (battery telemetry)
+         # Battery telemetry (driven on VM1 by bms.py)
          Vehicle.Powertrain.TractionBattery.CurrentCurrent          (A)
          Vehicle.Powertrain.TractionBattery.CurrentVoltage          (V)
          Vehicle.Powertrain.TractionBattery.StateOfCharge.Current   (%)
 
-         # On VM2's CLI -> VM2->VM1 bridge (SOME/IP active, Zenoh legacy) -> ev-range
-         Vehicle.Cabin.HVAC.AmbientAirTemperature                   (degC)
+         # Cabin signals (driven on VM2, bridged VM2->VM1 over Zenoh)
+         Vehicle.Cabin.HVAC.Station.Row1.Driver.FanSpeed            (% 0..100)
          Vehicle.Cabin.Seat.Row1.DriverSide.Heating                 (% 0..100)
          Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling          (% -100..100;
                                                                      negative = cooling/vent,
@@ -29,8 +30,7 @@ container on 127.0.0.1:55555) and:
          available_kWh  = (SoC / 100) * BATTERY_CAPACITY_KWH
          consumption    = NOMINAL_CONSUMPTION_KWH_PER_KM
          consumption   *= load_factor   if instantaneous power > NOMINAL_CRUISE_POWER_KW
-         consumption   *= temperature_factor(ambient_temp)         # cold weather
-         consumption   += cabin_load_kw / AVG_SPEED_KMH            # seat heater + ventilation
+         consumption   += cabin_load_kw / AVG_SPEED_KMH      # fan + seat heat/vent
          range_km       = available_kWh / consumption
 
   3. Publishes the result back to the same Databroker as:
@@ -56,20 +56,19 @@ SIGNAL_CURRENT = "Vehicle.Powertrain.TractionBattery.CurrentCurrent"
 SIGNAL_VOLTAGE = "Vehicle.Powertrain.TractionBattery.CurrentVoltage"
 SIGNAL_SOC     = "Vehicle.Powertrain.TractionBattery.StateOfCharge.Current"
 
-# ---- VM2 cabin signals (driven by Kuksa CLI on VM2) -------------------
-# Reach VM1 via the VM2->VM1 bridge (someip_publisher.py -> someip_client.py
-# is the active transport; zenoh_publisher.py -> zenoh_client.py is the
-# legacy alternative) -> ev-range Kuksa Databroker. Verify in the Kuksa
+# ---- VM2 cabin signals (driven by host PyTk dashboard) ----------------
+# Reach VM1 via the VM2->VM1 Zenoh bridge (zenoh_publisher.py ->
+# zenoh_client.py) -> ev-range Kuksa Databroker. Verify in the Kuksa
 # CLI on VM1 with:
-#   metadata Vehicle.Cabin.HVAC.AmbientAirTemperature
+#   metadata Vehicle.Cabin.HVAC.Station.Row1.Driver.FanSpeed
 #   metadata Vehicle.Cabin.Seat.Row1.DriverSide.Heating
 #   metadata Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling
-SIGNAL_AMBIENT_TEMP = "Vehicle.Cabin.HVAC.AmbientAirTemperature"
-SIGNAL_SEAT_HEAT    = "Vehicle.Cabin.Seat.Row1.DriverSide.Heating"
-SIGNAL_SEAT_HC      = "Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling"
+SIGNAL_FAN_SPEED = "Vehicle.Cabin.HVAC.Station.Row1.Driver.FanSpeed"
+SIGNAL_SEAT_HEAT = "Vehicle.Cabin.Seat.Row1.DriverSide.Heating"
+SIGNAL_SEAT_HC   = "Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling"
 
 BATTERY_SIGNALS    = [SIGNAL_CURRENT, SIGNAL_VOLTAGE, SIGNAL_SOC]
-CABIN_SIGNALS      = [SIGNAL_AMBIENT_TEMP, SIGNAL_SEAT_HEAT, SIGNAL_SEAT_HC]
+CABIN_SIGNALS      = [SIGNAL_FAN_SPEED, SIGNAL_SEAT_HEAT, SIGNAL_SEAT_HC]
 SUBSCRIBED_SIGNALS = BATTERY_SIGNALS + CABIN_SIGNALS
 
 RANGE_SIGNAL = "Vehicle.Powertrain.Range"
@@ -79,25 +78,19 @@ BATTERY_CAPACITY_KWH = 75.0
 NOMINAL_CONSUMPTION_KWH_PER_KM = 0.18
 NOMINAL_CRUISE_POWER_KW = 18.0
 
-# Cold-weather model. Each degree below COLD_THRESHOLD_C scales
-# consumption up by COLD_PENALTY_PER_DEG (battery efficiency loss +
-# cabin heater load), capped at MAX_TEMP_FACTOR so a single bad
-# reading cannot drive Range to zero.
-COLD_THRESHOLD_C = 15.0
-COLD_PENALTY_PER_DEG = 0.025
-MAX_TEMP_FACTOR = 2.0
-
 # Cabin actuator power model. We use Seat.Heating / Seat.HeatingCooling
-# on Row1.DriverSide as the *driver-zone* control signals - i.e. they
-# represent the aggregate of seat pad + footwell PTC heater + steering
-# wheel heater + cabin fan for that zone. That's why the "max" power
-# below is 2 kW heat / 0.5 kW vent rather than the ~150 W / ~50 W of
-# a bare seat element. This keeps the demo visible (real EV cabin
+# on Row1.DriverSide and the HVAC blower fan speed as the
+# *driver-zone* control signals - i.e. they represent the aggregate
+# of seat pad + footwell PTC heater + steering wheel heater + cabin
+# AC compressor + blower for that zone. That's why the "max" powers
+# below are 2 kW heat / 0.5 kW vent / 2 kW HVAC fan rather than the
+# bare-element values. This keeps the demo visible (real EV cabin
 # actuator budgets per zone).
 # AVG_SPEED_KMH converts an instantaneous kW load into kWh/km so it
 # can be added to NOMINAL_CONSUMPTION_KWH_PER_KM.
 SEAT_HEATER_FULL_KW = 2.0
 SEAT_VENT_FULL_KW   = 0.5
+HVAC_FAN_FULL_KW    = 2.0
 AVG_SPEED_KMH       = 60.0
 
 
@@ -121,7 +114,7 @@ class VehicleState:
         self.current = None          # battery current (A)
         self.voltage = None          # battery voltage (V)
         self.state_of_charge = None  # SoC (%)
-        self.ambient_temp = None     # ambient temp (degC) - from VM2
+        self.fan_speed = None        # HVAC blower fan (%, 0..100) - from VM2
         self.seat_heat = None        # seat heating  (%, 0..100) - from VM2
         self.seat_hc = None          # seat HeatingCooling (%, -100..100) - from VM2
 
@@ -135,8 +128,8 @@ class VehicleState:
             self.voltage = value
         elif path == SIGNAL_SOC:
             self.state_of_charge = value
-        elif path == SIGNAL_AMBIENT_TEMP:
-            self.ambient_temp = value
+        elif path == SIGNAL_FAN_SPEED:
+            self.fan_speed = value
         elif path == SIGNAL_SEAT_HEAT:
             self.seat_heat = value
         elif path == SIGNAL_SEAT_HC:
@@ -147,29 +140,22 @@ class VehicleState:
 BatteryState = VehicleState
 
 
-def temperature_factor(ambient_temp) -> float:
-    """Cold-weather consumption multiplier (>= 1.0)."""
-    if ambient_temp is None:
-        return 1.0
-    try:
-        t = float(ambient_temp)
-    except (TypeError, ValueError):
-        return 1.0
-    if t >= COLD_THRESHOLD_C:
-        return 1.0
-    factor = 1.0 + (COLD_THRESHOLD_C - t) * COLD_PENALTY_PER_DEG
-    return min(factor, MAX_TEMP_FACTOR)
-
-
 def cabin_load_kw(state: "VehicleState") -> float:
     """Total cabin actuator power draw (kW). Always >= 0.
 
+    * HVAC fan speed       : 0..100 %  -> 0..HVAC_FAN_FULL_KW
     * Seat.Heating         : 0..100 %  -> 0..SEAT_HEATER_FULL_KW
     * Seat.HeatingCooling  : -100..100 %
         positive (heating) -> SEAT_HEATER_FULL_KW * pct/100
         negative (cooling) -> SEAT_VENT_FULL_KW   * |pct|/100
     """
     total = 0.0
+    if state.fan_speed is not None:
+        try:
+            pct = max(0.0, min(100.0, float(state.fan_speed)))
+            total += HVAC_FAN_FULL_KW * (pct / 100.0)
+        except (TypeError, ValueError):
+            pass
     if state.seat_heat is not None:
         try:
             pct = max(0.0, min(100.0, float(state.seat_heat)))
@@ -213,10 +199,7 @@ def compute_range(state: VehicleState):
         except (TypeError, ValueError):
             pass
 
-    # Cold-weather penalty (multiplicative on traction consumption).
-    consumption *= temperature_factor(state.ambient_temp)
-
-    # Cabin actuator load (additive - seat heater + ventilation).
+    # Cabin actuator load (additive - HVAC fan + seat heater + vent).
     consumption += cabin_load_kw(state) / AVG_SPEED_KMH
 
     if consumption <= 0:
@@ -240,8 +223,7 @@ async def run(host: str, port: int) -> None:
             f"  Model: capacity={BATTERY_CAPACITY_KWH} kWh, "
             f"consumption={NOMINAL_CONSUMPTION_KWH_PER_KM} kWh/km, "
             f"cruise={NOMINAL_CRUISE_POWER_KW} kW, "
-            f"cold-threshold={COLD_THRESHOLD_C} degC, "
-            f"cold-penalty={COLD_PENALTY_PER_DEG * 100:.1f}%/deg, "
+            f"hvac-fan-max={HVAC_FAN_FULL_KW * 1000:.0f} W, "
             f"seat-heater-max={SEAT_HEATER_FULL_KW * 1000:.0f} W, "
             f"seat-vent-max={SEAT_VENT_FULL_KW * 1000:.0f} W"
         )
@@ -262,7 +244,6 @@ async def run(host: str, port: int) -> None:
             # ev-range VSS catalog, so we must publish an int (not a
             # float) - otherwise the broker rejects the write.
             range_km_int = max(0, int(round(range_km)))
-            tfac = temperature_factor(state.ambient_temp)
             cabin_kw = cabin_load_kw(state)
 
             try:
@@ -279,8 +260,7 @@ async def run(host: str, port: int) -> None:
                 f"SoC={_format(state.state_of_charge)} %, "
                 f"I={_format(state.current)} A, "
                 f"U={_format(state.voltage)} V, "
-                f"T={_format(state.ambient_temp)} degC, "
-                f"tempFactor={tfac:.2f}, "
+                f"fan={_format(state.fan_speed)} %, "
                 f"seatHeat={_format(state.seat_heat)} %, "
                 f"seatHC={_format(state.seat_hc)} %, "
                 f"cabin={cabin_kw * 1000:.0f} W)"

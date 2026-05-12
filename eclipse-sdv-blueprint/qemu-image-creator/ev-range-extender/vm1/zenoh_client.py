@@ -45,7 +45,7 @@ DEFAULT_KUKSA_PORT = 55555
 # the casts here mirror the VSS `datatype` (int8 -> int, float -> float).
 # Keep this in sync with vm2/zenoh_publisher.py BRIDGED_PATHS.
 BRIDGED_PATHS = {
-    "Vehicle.Cabin.HVAC.AmbientAirTemperature":            float,  # sensor, float, celsius
+    "Vehicle.Cabin.HVAC.Station.Row1.Driver.FanSpeed":     int,    # actuator, uint8, percent
     "Vehicle.Cabin.Seat.Row1.DriverSide.Heating":          int,    # actuator, int8, percent
     "Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling":   int,    # actuator, int8, percent
 }

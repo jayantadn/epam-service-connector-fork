@@ -10,9 +10,8 @@ Role:
     setpoints from the host PyTk hardware simulator
     (`hardware-sim/pytk_dashboard.py`) over Zenoh and writes them
     into the local `ev-range-cabin` Kuksa Databroker. From there
-    VM2's `zenoh_publisher.py` (or `someip_publisher.py`) bridges
-    the values to VM1's `ev-range` Kuksa, which `range_ai.py`
-    consumes.
+    VM2's `zenoh_publisher.py` bridges the values to VM1's
+    `ev-range` Kuksa, which `range_ai.py` consumes.
 
 End-to-end:
 
@@ -31,7 +30,7 @@ End-to-end:
         - Vehicle.Cabin.Seat.Row1.DriverSide.Heating         = int
         - Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling  = int
         |
-        | (zenoh_publisher.py / someip_publisher.py bridge)
+        | (zenoh_publisher.py bridge to VM1)
         v
     VM1 ev-range Kuksa Databroker
         |

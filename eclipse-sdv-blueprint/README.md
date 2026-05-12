@@ -10,7 +10,7 @@ It showcases how SDV applications are built in the cloud, pushed to AosEdge regi
 
 The demo application is an **EV Range Extender**.
 
-When the vehicle's battery state of charge drops below a defined threshold, the system automatically enters a power-saving mode. It identifies non-essential features and turns them off — e.g. ambient lighting, reading lights, and seat heating — while keeping all core driving and safety functions fully intact.
+When the vehicle's battery state of charge drops below a defined threshold, the system automatically enters a power-saving mode. It identifies non-essential features and turns them off or scales them down — e.g. HVAC climate control and seat heating — while keeping all core driving and safety functions fully intact.
 
 ### Customer Journey
 
@@ -19,18 +19,19 @@ The journey below shows how the system interacts across three steps — from the
 | | Step 1 | Step 2 | Step 3 |
 | :--- | :--- | :--- | :--- |
 | **Who** | System | System | Driver |
-| **What** | Vehicle battery (State of Charge) drops below the predefined critical threshold. | System automatically enters power-saving mode, instantly disabling non-essential features (ambient lights, seat heating). | Driver continues driving safely with extended range and is notified of the system's actions. |
-| **Customer TouchPoints** | None | Cabin environment (lights dim, seat heater turns off) | "Power Saving Mode" activated and Driving Range extended |
+| **What** | Vehicle battery (State of Charge) drops below the predefined critical threshold. | System automatically enters power-saving mode, instantly scaling down non-essential features (HVAC climate control, seat heating). | Driver continues driving safely with extended range and is notified of the system's actions. |
+| **Customer TouchPoints** | None | Cabin environment (HVAC eases off, seat heater turns off) | "Power Saving Mode" activated and Driving Range extended |
 
-> **Why this matters for OEMs:** Unlike a manual "Eco Mode" button, this journey highlights the **automated orchestration** of the Software-Defined Vehicle. The system constantly monitors the powertrain (Step 1), instantly communicates with the zonal controllers to shut down cabin comforts (Step 2), and keeps the driver informed without requiring them to take their hands off the wheel (Step 3).
+> **Why this matters for OEMs:** Unlike a manual "Eco Mode" button, this journey highlights the **automated orchestration** of the Software-Defined Vehicle. The system constantly monitors the powertrain (Step 1), instantly communicates with the end ECUs to shut down cabin comforts (Step 2), and keeps the driver informed without requiring them to take their hands off the wheel (Step 3).
 
 | Signal | Layer | Purpose |
 |---|---|---|
-| `Vehicle.Powertrain.Battery.StateOfCharge` | Zonal | Triggers power-saving mode when charge is low |
-| `Vehicle.Cabin.Lights.AmbientLight.Intensity` | Zonal | Reduced to save power |
-| `Vehicle.Cabin.Lights.ReadingLight.Status` | Zonal | Turned off to save power |
-| `Vehicle.Cabin.Seat.Heating` | Zonal | Disabled to save power |
-| `Vehicle.Powertrain.Range` | HPC | Monitored at the compute level |
+| `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` | End | Triggers power-saving mode when charge is low |
+| `Vehicle.Powertrain.TractionBattery.CurrentVoltage` | End | Battery voltage monitored by the Battery Monitoring System |
+| `Vehicle.Powertrain.TractionBattery.CurrentCurrent` | End | Battery current monitored by the Battery Monitoring System |
+| `Vehicle.Cabin.HVAC.AmbientAirTemperature` | End | Adjusted to save power |
+| `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` | End | Disabled to save power |
+| `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` | End | Disabled to save power |
 
 ---
 
@@ -73,7 +74,7 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
         ↓
 5. The app reads/writes vehicle signals via eclipse-kuksa
         ↓
-6. Signals flow between HPC-VM and Zonal-VM over eclipse-score / SOME-IP
+6. Signals flow between HPC-VM and End-VM over eclipse-zenoh
 ```
 
 ### What's running in each layer
@@ -82,8 +83,8 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 |---|---|---|
 |  **AosCloud** | Fleet Management + App Registry | Stores, versions and distributes vehicle apps to the fleet |
 |  **HPC-VM** (Linux) | AosCore + digital.auto + Eclipse AutoWorx stack | The brain — runs the vehicle app, handles signal logic |
-|  **Zonal-VM** (Linux) | Sensor/Actuator Controllers | Simulates the lower-level ECU that controls physical components |
-|  **Communication stack** | Eclipse SCore / SOME-IP | Connects HPC and Zonal layers — same protocol used in real cars |
+|  **End-VM** (Linux) | Seat Control Module, HVAC ECU, Range Compute AI, Battery Monitoring System | Simulates the end-ECU layer that controls physical components |
+|  **Communication stack** | Eclipse Zenoh | Connects HPC-VM and End-VM — lightweight pub/sub messaging |
 
 ### Eclipse components inside the blueprint phase 1
 
@@ -92,7 +93,7 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 | `eclipse-autoworx` | Automates app lifecycle management on the vehicle |
 | `eclipse-kuksa` | Vehicle signal broker — reads and writes VSS signals |
 | `eclipse-velocitas` | Framework for building vehicle apps in Python/C++ |
-| `eclipse-score` | Framework for building vehicle apps in Python/C++ |
+| `eclipse-zenoh` | Modern pub/sub communication protocol between HPC-VM and End-VM |
 
 ### Automated Setup
 
@@ -100,7 +101,7 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 1. When the automated setup script is ran:
 	- HPC-VM is launched by default
 	- digital.auto runtime is automatically launched. 
-1. Launch the Zonal-VM using the script vm2_launch.sh
+1. Launch the End-VM using the script vm2_launch.sh
 
 
 
@@ -207,10 +208,11 @@ A key addition in Phase 2 is the **End ECU layer** (STM32), which represents the
 |---|---|---|
 | **Goal** | Develop & validate logic | Validate on real hardware |
 | **HPC** | Linux VM (QEMU) | NXP S32G2 |
-| **Zonal** | Linux VM | Raspberry Pi |
-| **End ECU** | Not present | STM32 |
-| **Zonal ↔ End comms** | Not present | Eclipse Zenoh |
-| **HPC ↔ Zonal comms** | Eclipse SCore / SOME-IP | Eclipse SCore / SOME-IP |
+| **Zonal** | Not present | Raspberry Pi |
+| **End ECU** | Linux VM (QEMU) | STM32 |
+| **HPC ↔ End comms** | Eclipse Zenoh | — |
+| **HPC ↔ Zonal comms** | — | Eclipse SCore / SOME-IP |
+| **Zonal ↔ End comms** | — | Eclipse Zenoh |
 | **Setup complexity** | Low — just Docker | Requires hardware |
 | **Best for** | App development, signal testing, OEM demos | Pre-production validation |
 
