@@ -121,8 +121,15 @@ ls -l /dev/kvm           # should exist
 groups | grep -w kvm     # your user should be in the kvm group
 ```
 
-If `/dev/kvm` is missing or you're not in the `kvm` group, `setup.py`
-still works but the VMs will be very slow.
+If both pass, `setup.py` will print `[SUCCESS] KVM enabled` in Step 4
+and you're done.
+
+If either check fails, `setup.py` still works but the VMs will be very
+slow (TCG software emulation, 5×–20× slower). To turn KVM on, the
+fastest path is the copy-paste block in
+[**Troubleshooting → G0. Try this first**](#g0-try-this-first-works-for-80--of-cases);
+if that doesn't help, the same Troubleshooting section walks you
+through every other case (BIOS/UEFI, kernel module, WSL2 nested virt).
 
 ### Step 4 — Provision and launch both VMs (Terminal 1)
 
@@ -282,6 +289,12 @@ ssh ubuntu@192.168.100.10 'cloud-init status --long; tail -40 /tmp/evrange-runti
 
 Common causes:
 
+- **KVM is off** and the VM is running under TCG software emulation.
+  This is the single biggest cause of "stuck at Waiting for SDV
+  Runtime" — first boot can balloon to 15-30 min. Look at the top of
+  the `setup.py` output: if it says `[WARNING] KVM not enabled (slower
+  VM)` instead of `[SUCCESS] KVM enabled`, jump to **section G**
+  below before debugging anything else.
 - The VM lost outbound DNS (SLIRP doesn't carry IPv6, glibc prefers
   IPv6). The cloud-init template forces IPv4 for apt/pip; if you see
   "Temporary failure in name resolution", retry once — apt is set to
@@ -367,6 +380,174 @@ Outside a virtualenv use
 Already handled in code (forces `cursor=left_ptr`, lifts and focuses
 the window on launch). If it still happens, click anywhere in the
 window once and the controls will respond.
+
+### G. VMs feel extremely slow / `setup.py` shows `[WARNING] KVM not enabled (slower VM)`
+
+QEMU is running in **TCG software emulation** instead of KVM hardware
+virtualization. Cloud-init that takes ~2 min with KVM can take 15–30
+min without it, and per-action latency (slider drags, range recompute)
+suffers proportionally. `setup.py` still completes, but the wait is
+painful — fix it once with the flow below.
+
+#### G0. Try this first (works for ~80 % of cases)
+
+On Ubuntu / Debian, run **all three** commands; this is the entire
+"enable KVM" sequence when virtualization is already on in
+BIOS/UEFI/WSL2:
+
+```bash
+# 1. Install the KVM userspace + helpers (if not already there)
+sudo apt update
+sudo apt install -y qemu-kvm cpu-checker
+
+# 2. Load the kernel module (idempotent; no error if already loaded)
+sudo modprobe kvm_intel    # Intel CPU
+# OR
+sudo modprobe kvm_amd      # AMD CPU
+
+# 3. Add yourself to the kvm group, then refresh the shell so it sticks
+sudo usermod -aG kvm $USER
+newgrp kvm
+
+# 4. Verify
+kvm-ok                                # should print "KVM acceleration can be used"
+ls -l /dev/kvm                        # should exist, group = kvm
+groups | tr ' ' '\n' | grep '^kvm$'   # should print: kvm
+```
+
+If `kvm-ok` says **"KVM acceleration can be used"** and `/dev/kvm`
+exists, you're done — jump to **G6** to wipe the half-baked VMs and
+rerun `setup.py`.
+
+If `kvm-ok` says **"KVM acceleration can NOT be used"** or any of the
+verify commands fail, your case is one of the four below — run the
+diagnose block in G1 to see which.
+
+#### G1. Diagnose
+
+Run all four commands together; the combined output tells you which
+fix to apply:
+
+```bash
+grep -i microsoft /proc/version || echo "NATIVE LINUX"
+egrep -c '(vmx|svm)' /proc/cpuinfo
+ls -l /dev/kvm 2>&1
+groups | tr ' ' '\n' | grep -E '^kvm$' || echo "NOT IN KVM GROUP"
+```
+
+Read the four outputs in order and pick the matching row:
+
+| Symptom | Meaning | Fix |
+|---|---|---|
+| `/dev/kvm` exists **and** `kvm` is in `groups` | KVM is already on. `setup.py` will print `[SUCCESS] KVM enabled`. | Nothing to do. |
+| `/dev/kvm` exists, but `NOT IN KVM GROUP` printed | Just a permissions issue. | G2. |
+| `egrep` count is `0` and **`NATIVE LINUX`** | CPU virtualization is disabled in BIOS/UEFI. | G3. |
+| `egrep` count is `>0`, `/dev/kvm` missing, **`NATIVE LINUX`** | KVM kernel module not loaded. | G4. |
+| `/proc/version` line contains `microsoft` (you're on **WSL2**) and `/dev/kvm` is missing | WSL2 isn't exposing nested virt. | G5. |
+
+#### G2. Add your user to the `kvm` group
+
+```bash
+sudo usermod -aG kvm $USER
+newgrp kvm                          # or log out and back in
+groups | tr ' ' '\n' | grep '^kvm$' # should print: kvm
+```
+
+#### G3. Enable virtualization in BIOS/UEFI (native Linux)
+
+Reboot, enter the firmware setup (the key varies by vendor — usually
+`F2`, `Del`, `F10`, or `Esc` during the splash screen), and turn on:
+
+- **Intel:** `Intel Virtualization Technology` / `Intel VT-x`
+- **AMD:** `AMD-V` (and `AMD-Vi` / `IOMMU` if you also want PCI passthrough — not needed here)
+
+Save, reboot, run the diagnose block again. The `egrep` count must
+become non-zero before any of the other fixes will work.
+
+#### G4. Load the KVM kernel module
+
+```bash
+sudo modprobe kvm_intel    # Intel CPUs
+# or
+sudo modprobe kvm_amd      # AMD CPUs
+```
+
+Make it persist across reboots:
+
+```bash
+echo 'kvm_intel' | sudo tee /etc/modules-load.d/kvm.conf   # or kvm_amd
+```
+
+Then run G2 to add yourself to the `kvm` group.
+
+#### G5. Enable nested virtualization for WSL2
+
+KVM inside WSL2 needs Hyper-V on the Windows host to expose
+virtualization extensions to the WSL VM. None of these steps run
+inside the Ubuntu shell — they all run on the **Windows host**.
+
+1. Close every Ubuntu/WSL terminal you have open.
+2. On Windows, open the Start menu, search for **PowerShell**,
+   right-click **Windows PowerShell** and choose **Run as administrator**
+   (a blue PowerShell window appears with prompt `PS C:\WINDOWS\system32>`).
+3. In that PowerShell window, run:
+
+   ```powershell
+   wsl --update
+   wsl --version
+   ```
+
+   You want WSL kernel `5.15` or newer. Recent kernels enable nested
+   KVM by default; `wsl --update` pulls one in if you're behind.
+
+4. Create or edit `C:\Users\<your-windows-username>\.wslconfig`
+   with this content (Notepad is fine):
+
+   ```ini
+   [wsl2]
+   nestedVirtualization=true
+   ```
+
+5. Back in PowerShell:
+
+   ```powershell
+   wsl --shutdown
+   ```
+
+6. Reopen Ubuntu from the Start menu and verify:
+
+   ```bash
+   ls -l /dev/kvm
+   ```
+
+   You should now see something like
+   `crw-rw---- 1 root kvm 10, 232 ... /dev/kvm`. Then run G2 to join
+   the `kvm` group.
+
+> **Corporate-laptop caveat.** If `wsl --update` errors with an
+> elevation / Group Policy message, or `/dev/kvm` is still missing
+> after step 6, IT has locked nested virtualization on the corporate
+> image. There is no user-side workaround — file an IT ticket asking
+> for "Hyper-V nested virtualization for WSL2". In the meantime
+> `setup.py` still works (just slowly): allow ~15–30 min for the first
+> boot and ~5 min for subsequent ones.
+
+#### G6. Wipe the half-baked VMs and rerun setup
+
+After applying any fix above, destroy the half-provisioned VMs (their
+qcow2 disks may already have partial cloud-init writes from the slow
+run) and rerun `setup.py`:
+
+```bash
+sudo pkill -f qemu-system-x86_64 || true
+rm -f output/vm1.qcow2 output/vm2.qcow2 output/seed-vm*.iso
+python3 setup.py
+```
+
+The first KVM line of the new run **must** read `[SUCCESS] KVM
+enabled`. If it still says `[WARNING]`, you missed `newgrp kvm` (or
+didn't reopen the Ubuntu shell after toggling nested virt) — fix that
+and rerun before letting setup continue.
 
 ---
 
