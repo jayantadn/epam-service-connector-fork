@@ -54,10 +54,11 @@ Host (192.168.100.1)                    VMs (auto-deployed by cloud-init)
   ```bash
   sudo apt install -y python3-tk
   ```
-- **Zenoh Python binding**. The recommended path is the top-level
-  virtualenv:
+- **Zenoh Python binding**. The recommended path is to reuse the
+  virtualenv created in `qemu-image-creator/` (a sibling of this
+  folder at the repo root):
   ```bash
-  cd ../              # qemu-image-creator/
+  cd ../qemu-image-creator
   source .venv/bin/activate
   python3 -m pip install -r requirements.txt
   ```
@@ -130,10 +131,11 @@ Tk is not installed on the host: `sudo apt install -y python3-tk`.
 
 **`ImportError: No module named 'zenoh'`**
 
-The top-level virtualenv isn't active or its deps weren't installed:
+The `qemu-image-creator/` virtualenv isn't active or its deps weren't
+installed:
 
 ```bash
-cd ../
+cd ../qemu-image-creator
 source .venv/bin/activate
 python3 -m pip install -r requirements.txt
 ```

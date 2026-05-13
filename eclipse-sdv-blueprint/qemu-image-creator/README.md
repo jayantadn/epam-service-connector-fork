@@ -129,6 +129,7 @@ still works but the VMs will be very slow.
 ```bash
 cd path/to/eclipse-sdv-blueprint/qemu-image-creator
 source .venv/bin/activate
+python3 -m pip install -r requirements.txt
 python3 setup.py        # OR ./setup.sh — same behaviour
 ```
 
@@ -151,10 +152,19 @@ created!`, every ECU service is already running on its VM.
 
 ### Step 5 — Launch the dashboard (Terminal 2)
 
+`hardware-sim/` lives next to `qemu-image-creator/` at the repo root,
+so reuse the same virtualenv created in Step 2 (the one in
+`qemu-image-creator/.venv`). [`requirements.txt`](requirements.txt)
+already covers both `setup.py` (PyYAML) and the dashboard
+(`eclipse-zenoh`); the system `python3-tk` package was installed via
+`apt` in Step 1.
+
 ```bash
 cd path/to/eclipse-sdv-blueprint/qemu-image-creator
 source .venv/bin/activate
-python3 hardware-sim/pytk_dashboard.py
+python3 -m pip install -r requirements.txt
+cd ../hardware-sim
+python3 pytk_dashboard.py
 ```
 
 A Tk window opens with three sections:
