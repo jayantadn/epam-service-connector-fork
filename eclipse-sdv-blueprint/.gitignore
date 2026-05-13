@@ -69,6 +69,12 @@ pyvenv/
 **/.virtualenv/
 **/virtualenv/
 **/pyvenv/
+# The trailing-slash patterns above match real venv directories; the
+# patterns below (no trailing slash) also catch a symlink named .venv
+# that points at a sibling venv (e.g. hardware-sim/.venv ->
+# ../qemu-image-creator/.venv, used so both folders share one venv).
+.venv
+**/.venv
 # Marker file written at the root of every PEP 405 venv.
 pyvenv.cfg
 .python-version

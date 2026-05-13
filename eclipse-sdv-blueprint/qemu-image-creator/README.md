@@ -162,8 +162,8 @@ already covers both `setup.py` (PyYAML) and the dashboard
 ```bash
 cd path/to/eclipse-sdv-blueprint/qemu-image-creator
 source .venv/bin/activate
-python3 -m pip install -r requirements.txt
 cd ../hardware-sim
+python3 -m pip install -r requirements.txt
 python3 pytk_dashboard.py
 ```
 
