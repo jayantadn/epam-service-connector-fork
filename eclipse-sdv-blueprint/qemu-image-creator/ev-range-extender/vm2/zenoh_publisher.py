@@ -136,20 +136,37 @@ async def run(kuksa_host: str, kuksa_port: int, zenoh_peer: str) -> None:
             )
 
             paths = list(BRIDGED_PATHS.keys())
+            # Per-path last-forwarded value cache. Drops Kuksa updates
+            # whose value is identical to the previous one we forwarded -
+            # keeps the VM2->VM1 Zenoh link quiet during back-and-forth
+            # scrubs and saves the downstream zenoh_client + Kuksa write.
+            last_fwd = {}
             async for updates in kuksa.subscribe_current_values(paths):
+                forwarded = []
                 for path, dp in updates.items():
                     if dp is None or dp.value is None:
                         continue
                     cfg = BRIDGED_PATHS.get(path)
                     if cfg is None:
                         continue
+                    if last_fwd.get(path) == dp.value:
+                        continue
                     _zk, unit = cfg
                     try:
                         payload = make_payload(path, dp.value, unit, source)
                         publishers[path].put(payload)
-                        log(f"FWD  {path} = {dp.value}  ->  zenoh ({len(payload)} B)")
                     except Exception as exc:
                         log(f"ERROR forwarding {path}: {exc}")
+                        continue
+                    last_fwd[path] = dp.value
+                    forwarded.append((path, dp.value, len(payload)))
+                if forwarded:
+                    # One log line summarising the batched forward, instead
+                    # of one log line per sample at slider-drag rates.
+                    summary = ", ".join(
+                        f"{p}={v} ({n}B)" for p, v, n in forwarded
+                    )
+                    log(f"FWD  {len(forwarded)} key(s)  ->  zenoh: {summary}")
 
 
 def parse_args() -> argparse.Namespace:

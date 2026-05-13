@@ -52,7 +52,9 @@ import argparse
 import asyncio
 import json
 import sys
+import threading
 from datetime import datetime
+from typing import Any
 
 import zenoh
 from kuksa_client.grpc import Datapoint
@@ -89,18 +91,79 @@ def build_zenoh_config(listen_endpoint: str) -> zenoh.Config:
     return config
 
 
-async def push_to_kuksa(client: VSSClient, path: str, value, cast, src: str) -> None:
-    try:
-        coerced = cast(value)
-    except (TypeError, ValueError) as exc:
-        log(f"WARN cannot cast {value!r} -> {cast.__name__} for {path}: {exc}")
-        return
-    try:
-        await client.set_current_values({path: Datapoint(coerced)})
-    except Exception as exc:
-        log(f"ERROR writing {path}={coerced} to Kuksa: {exc}")
-        return
-    log(f"OK   {path} = {coerced} (from {src})")
+class _LatestValueQueue:
+    """Coalescing latest-value queue for a small number of VSS paths.
+
+    Producers (the Zenoh worker thread) call `offer(path, value, cast,
+    src)` on every incoming sample. When multiple samples for the same
+    path arrive before the consumer drains, only the LAST one survives.
+    The single consumer (one asyncio task) calls `take()` and gets a
+    snapshot of all pending paths, then clears the slot.
+
+    For seat the queue is especially useful because Heating and
+    HeatingCooling toggles can flip near-simultaneously (the host
+    dashboard's mutex publishes them in quick succession). Both end
+    up in the same snapshot and are written to Kuksa in a single
+    batched RPC.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._lock = threading.Lock()
+        self._pending: dict[str, tuple[Any, Any, str]] = {}
+        self._evt = asyncio.Event()
+
+    def offer(self, path: str, value: Any, cast: Any, src: str) -> None:
+        """Producer side. Safe to call from any thread; never blocks."""
+        with self._lock:
+            self._pending[path] = (value, cast, src)
+        self._loop.call_soon_threadsafe(self._evt.set)
+
+    async def take(self) -> dict[str, tuple[Any, Any, str]]:
+        """Consumer side. Awaits at least one offered value, returns snapshot."""
+        while True:
+            await self._evt.wait()
+            with self._lock:
+                if self._pending:
+                    snapshot = self._pending
+                    self._pending = {}
+                    self._evt.clear()
+                    return snapshot
+                self._evt.clear()
+
+
+async def _consumer(queue: "_LatestValueQueue", kuksa: VSSClient) -> None:
+    """Drain the latest-value queue and push to Kuksa with dedup.
+
+    Identical re-writes (same path + same coerced value as last time)
+    are dropped so the broker isn't woken up needlessly when the user
+    re-toggles to the same state.
+    """
+    last_sent: dict[str, Any] = {}
+    while True:
+        pending = await queue.take()
+        updates: dict[str, Datapoint] = {}
+        log_lines: list[str] = []
+        for path, (raw_value, cast, src) in pending.items():
+            try:
+                coerced = cast(raw_value)
+            except (TypeError, ValueError) as exc:
+                log(f"WARN cannot cast {raw_value!r} -> {cast.__name__} for {path}: {exc}")
+                continue
+            if last_sent.get(path) == coerced:
+                continue
+            updates[path] = Datapoint(coerced)
+            last_sent[path] = coerced
+            log_lines.append(f"OK   {path} = {coerced} (from {src})")
+        if not updates:
+            continue
+        try:
+            await kuksa.set_current_values(updates)
+        except Exception as exc:
+            log(f"ERROR writing {len(updates)} key(s) to Kuksa: {exc}")
+            continue
+        for line in log_lines:
+            log(line)
 
 
 async def run(listen: str, kuksa_host: str, kuksa_port: int) -> None:
@@ -112,6 +175,8 @@ async def run(listen: str, kuksa_host: str, kuksa_port: int) -> None:
             log(f"    {k}  ->  {vss}  ({cast.__name__})")
 
         loop = asyncio.get_running_loop()
+        queue = _LatestValueQueue(loop)
+        consumer_task = asyncio.create_task(_consumer(queue, kuksa))
         log(f"Opening Zenoh session, listen={listen}, subscribed to '{KEY_PREFIX}'")
         with zenoh.open(build_zenoh_config(listen)) as session:
             stop_event = asyncio.Event()
@@ -134,9 +199,7 @@ async def run(listen: str, kuksa_host: str, kuksa_port: int) -> None:
                 if value is None:
                     log(f"WARN payload missing 'value' on '{key}': {msg}")
                     return
-                asyncio.run_coroutine_threadsafe(
-                    push_to_kuksa(kuksa, vss_path, value, cast, src), loop
-                )
+                queue.offer(vss_path, value, cast, src)
 
             _sub = session.declare_subscriber(KEY_PREFIX, listener)
             log("Seat ECU running. Drive values from the host PyTk dashboard. Ctrl+C to stop.")
@@ -144,6 +207,8 @@ async def run(listen: str, kuksa_host: str, kuksa_port: int) -> None:
                 await stop_event.wait()
             except asyncio.CancelledError:
                 pass
+            finally:
+                consumer_task.cancel()
 
 
 def parse_args() -> argparse.Namespace:
