@@ -22,6 +22,59 @@ Each Zenoh sample is a tiny JSON payload:
 The ECUs decode the JSON and write the value into their local Kuksa
 Databroker. From there `range_ai.py` recomputes the remaining range.
 
+Reverse channel (NEW):
+    The HVAC ECU and Seat Control Module each subscribe to their
+    OWN local Kuksa for the VSS path they own, and on every change
+    push a tiny key/value status envelope back to this dashboard
+    over Zenoh on:
+
+        dash/status/hvac   <-  hvac_ecu.py
+        dash/status/seat   <-  seat_ecu.py
+
+    Envelope (one logical signal per message):
+        {"key":   "hvac.fan_speed"   |
+                  "seat.heating"     |
+                  "seat.heating_cooling",
+         "value": <number>,
+         "status": "on" | "off" | "heating" | "cooling",
+         "source": "vm2",
+         "ts":    "<iso>"}
+
+    The dashboard's `IndicatorPanel` maps reverse-channel `value` /
+    `status` (and the dashboard's own toggle state) to colored LEDs.
+    The seat lane is split into TWO independent LEDs (heating +
+    cooling) because they are physically different actuators and
+    visualising them in one bulb hides cases where the EV-app on VM1
+    drives the two channels in lockstep:
+
+        HVAC          : status="on"                      -> green
+                        status="off"                     -> red
+
+        Seat Heating  : dashboard toggle on              -> red
+                        seat.heating         value != 0  -> red
+                        seat.heating_cooling value >  0  -> red
+                                                            (VSS:
+                                                             HC > 0 =
+                                                             heating)
+                        otherwise                        -> grey
+
+        Seat Cooling  : dashboard toggle on              -> blue
+                        seat.heating_cooling value != 0  -> blue
+                        otherwise                        -> grey
+
+    The Cooling LED's "value != 0" rule is intentionally broader than
+    strict VSS (which would only treat HC<0 as cooling), so the LED
+    also lights up when the EV Range Extender prototype on
+    `playground.digital.auto` writes `HeatingCooling = 1` to mean
+    "seat module engaged". In that flow the Heating LED is also red
+    (because HC > 0 == heating per VSS), and both LEDs being on side
+    by side mirrors the EV-app's intent.
+
+    The whole point of the reverse channel is that writes made by
+    the EV Range Extender app on VM1 (which travel VM1 -> VM2 via
+    the kuksa-bridge) become visible on the host dashboard without
+    needing to query Kuksa directly.
+
 Plausibility / UX rules baked into the catalogue below:
     - All inputs are non-negative on the slider/spinbox side (current
       cannot be entered as a negative number).
@@ -53,7 +106,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from tkinter import BooleanVar, Frame, IntVar, StringVar, Tk, ttk
+from tkinter import BooleanVar, Canvas, Frame, IntVar, StringVar, Tk, ttk
 from typing import Callable, Optional
 
 import zenoh
@@ -64,6 +117,19 @@ DEFAULT_VM2_IP = "192.168.100.11"
 DEFAULT_BMS_PORT = 7460
 DEFAULT_HVAC_PORT = 7461
 DEFAULT_SEAT_PORT = 7462
+
+# Reverse-channel keys the dashboard subscribes to. Kept in sync with
+# DASH_STATUS_KEY on the matching ECU (vm2/hvac_ecu.py, vm2/seat_ecu.py).
+STATUS_KEY_HVAC = "dash/status/hvac"
+STATUS_KEY_SEAT = "dash/status/seat"
+
+# Color palette for the indicator LEDs.
+INDICATOR_COLORS = {
+    "green":  "#2ecc71",
+    "red":    "#e74c3c",
+    "blue":   "#3498db",
+    "grey":   "#7f8c8d",
+}
 
 
 @dataclass
@@ -163,6 +229,10 @@ class ZenohBus:
     Uses peer mode dialing the three ECU TCP listeners. The session is
     opened lazily on the first `put` so an unreachable ECU does not
     block GUI startup; failed publishes are reported on the status bar.
+
+    The same session is reused for reverse-channel subscriptions
+    (`subscribe`), so ECU -> host samples ride the existing TCP peer
+    connections without needing a second Zenoh process or extra ports.
     """
 
     def __init__(self, endpoints: list[str]) -> None:
@@ -170,6 +240,7 @@ class ZenohBus:
         self.source = socket.gethostname()
         self._session: zenoh.Session | None = None
         self._publishers: dict[str, zenoh.Publisher] = {}
+        self._subscribers: list[zenoh.Subscriber] = []
         self._lock = threading.Lock()
 
     def _ensure(self) -> zenoh.Session:
@@ -196,8 +267,47 @@ class ZenohBus:
         }).encode("utf-8")
         pub.put(payload)
 
+    def subscribe(self, key_expr: str,
+                  callback: Callable[[str, dict], None]) -> None:
+        """Subscribe to a Zenoh key/key-expr and invoke `callback`
+        from the Zenoh worker thread for each sample.
+
+        The callback receives `(key_str, parsed_json_dict)`. JSON
+        parse failures are silently dropped (a malformed message
+        from an ECU should not crash the GUI thread).
+
+        Tk is single-threaded; the callback MUST marshal any widget
+        updates onto the Tk loop itself - this method does not do
+        that for you. See `IndicatorPanel._on_sample` for the
+        canonical `root.after_idle` shim.
+        """
+        session = self._ensure()
+
+        def _listener(sample: zenoh.Sample) -> None:
+            try:
+                raw = sample.payload.to_string()
+                msg = json.loads(raw)
+            except Exception:
+                return
+            if not isinstance(msg, dict):
+                return
+            try:
+                callback(str(sample.key_expr), msg)
+            except Exception:
+                pass
+
+        sub = session.declare_subscriber(key_expr, _listener)
+        with self._lock:
+            self._subscribers.append(sub)
+
     def close(self) -> None:
         with self._lock:
+            for sub in self._subscribers:
+                try:
+                    sub.undeclare()
+                except Exception:
+                    pass
+            self._subscribers.clear()
             for pub in self._publishers.values():
                 try:
                     pub.undeclare()
@@ -375,12 +485,270 @@ class SignalRow:
         self.publish(self.sig, value)
 
 
+class IndicatorPanel:
+    """Reverse-channel status indicators.
+
+    Renders three small LED-style canvases under the rest of the GUI:
+      * HVAC          : green when fan is on, red when fan is off
+      * Seat Heating  : red  when the seat is warming, grey otherwise
+      * Seat Cooling  : blue when the seat is cooling, grey otherwise
+
+    The seat lane uses TWO independent LEDs rather than one bulb with
+    a precedence rule. That makes it obvious at a glance which seat
+    actuator is engaged, and surfaces the (pathological) case where
+    the EV-app on VM1 drives both channels at the same time.
+
+    The seat LEDs are driven by **two independent inputs** and turn
+    on when EITHER fires:
+
+      1. Reverse channel from VM2's seat ECU (real Kuksa state):
+         `seat.heating` status `heating` or `seat.heating_cooling`
+         status `heating`  -> Heating LED red
+         `seat.heating_cooling` status `cooling`
+                          -> Cooling LED blue
+
+      2. The dashboard's own toggle state (user-stated intent):
+         Seat Heating toggle ON  -> Heating LED red
+         Seat Cooling toggle ON  -> Cooling LED blue
+
+    Combining both is necessary because the EV Range Extender app on
+    VM1 may keep overwriting `Vehicle.Cabin.Seat.Row1.DriverSide.\\
+    HeatingCooling` with a positive value (the playground prototype
+    writes `1` per tick), which would otherwise drag the cooling LED
+    back to grey the instant the dashboard publishes `-100`. The
+    local-toggle override means the user's intent stays visible on
+    the indicator even when the EV-app overrules the actual Kuksa
+    value over the wire.
+
+    Updates arrive on Zenoh callbacks from the worker thread; this
+    panel marshals each one onto the Tk loop with `after_idle`
+    because Tk is not thread-safe. Toggle changes arrive on the Tk
+    loop directly (no marshalling needed).
+
+    Per-key memory:
+      * `_seat_keys`              : last (value, status) seen for
+                                    each of the two seat VSS keys
+                                    (`seat.heating`,
+                                    `seat.heating_cooling`).
+      * `_local_heating_on` /
+        `_local_cooling_on`       : last known state of the two
+                                    dashboard toggles, pushed by
+                                    `Dashboard._publish`.
+      * `_last_color` / `_last_text` : per-lane dedup so the
+                                    indicator does not flicker when
+                                    an input re-asserts the same
+                                    state.
+    """
+
+    def __init__(self, parent: Frame, root: Tk) -> None:
+        self._root = root
+
+        # HVAC row -----------------------------------------------------
+        hvac = ttk.LabelFrame(parent, text="HVAC Status (from VM2)", padding=(8, 6))
+        hvac.pack(fill="x", expand=False, padx=10, pady=(8, 0))
+
+        hvac_row = Frame(hvac)
+        hvac_row.pack(fill="x", expand=True)
+        ttk.Label(hvac_row, text="Fan", width=10).grid(row=0, column=0, sticky="w", padx=(4, 8), pady=4)
+        self._hvac_canvas = Canvas(hvac_row, width=22, height=22,
+                                   highlightthickness=0, bd=0)
+        self._hvac_circle = self._hvac_canvas.create_oval(
+            3, 3, 19, 19, fill=INDICATOR_COLORS["grey"], outline="#333"
+        )
+        self._hvac_canvas.grid(row=0, column=1, padx=4, pady=4)
+        self._hvac_text = StringVar(value="awaiting ECU...")
+        ttk.Label(hvac_row, textvariable=self._hvac_text, anchor="w").grid(
+            row=0, column=2, sticky="we", padx=(8, 4), pady=4
+        )
+        hvac_row.columnconfigure(2, weight=1)
+
+        # Seat lane (two LEDs: heating + cooling) ----------------------
+        seat = ttk.LabelFrame(parent, text="Seat Status (from VM2)", padding=(8, 6))
+        seat.pack(fill="x", expand=False, padx=10, pady=(8, 0))
+
+        # Heating sub-row.
+        seat_heat_row = Frame(seat)
+        seat_heat_row.pack(fill="x", expand=True)
+        ttk.Label(seat_heat_row, text="Heating", width=10).grid(
+            row=0, column=0, sticky="w", padx=(4, 8), pady=4
+        )
+        self._seat_heat_canvas = Canvas(seat_heat_row, width=22, height=22,
+                                        highlightthickness=0, bd=0)
+        self._seat_heat_circle = self._seat_heat_canvas.create_oval(
+            3, 3, 19, 19, fill=INDICATOR_COLORS["grey"], outline="#333"
+        )
+        self._seat_heat_canvas.grid(row=0, column=1, padx=4, pady=4)
+        self._seat_heat_text = StringVar(value="awaiting ECU...")
+        ttk.Label(seat_heat_row, textvariable=self._seat_heat_text, anchor="w").grid(
+            row=0, column=2, sticky="we", padx=(8, 4), pady=4
+        )
+        seat_heat_row.columnconfigure(2, weight=1)
+
+        # Cooling sub-row.
+        seat_cool_row = Frame(seat)
+        seat_cool_row.pack(fill="x", expand=True)
+        ttk.Label(seat_cool_row, text="Cooling", width=10).grid(
+            row=0, column=0, sticky="w", padx=(4, 8), pady=4
+        )
+        self._seat_cool_canvas = Canvas(seat_cool_row, width=22, height=22,
+                                        highlightthickness=0, bd=0)
+        self._seat_cool_circle = self._seat_cool_canvas.create_oval(
+            3, 3, 19, 19, fill=INDICATOR_COLORS["grey"], outline="#333"
+        )
+        self._seat_cool_canvas.grid(row=0, column=1, padx=4, pady=4)
+        self._seat_cool_text = StringVar(value="awaiting ECU...")
+        ttk.Label(seat_cool_row, textvariable=self._seat_cool_text, anchor="w").grid(
+            row=0, column=2, sticky="we", padx=(8, 4), pady=4
+        )
+        seat_cool_row.columnconfigure(2, weight=1)
+
+        # Per-key status memory (drives BOTH seat LEDs independently).
+        self._seat_keys: dict[str, tuple[int, str]] = {}
+        # Last known dashboard toggle state. Pushed in from
+        # Dashboard._publish so the LEDs can reflect the user's intent
+        # even if the EV-app on VM1 overwrites the Kuksa value.
+        self._local_heating_on: bool = False
+        self._local_cooling_on: bool = False
+        self._last_color: dict[str, str] = {}
+        self._last_text: dict[str, str] = {}
+
+    # -- Zenoh callbacks --------------------------------------------------
+
+    def on_hvac_sample(self, _key: str, msg: dict) -> None:
+        """Zenoh worker thread -> Tk loop trampoline (HVAC)."""
+        self._root.after_idle(self._apply_hvac, msg)
+
+    def on_seat_sample(self, _key: str, msg: dict) -> None:
+        """Zenoh worker thread -> Tk loop trampoline (Seat)."""
+        self._root.after_idle(self._apply_seat, msg)
+
+    # -- Toggle-state hook (called from Dashboard._publish) --------------
+
+    def set_seat_toggle_state(self, heating_on: bool, cooling_on: bool) -> None:
+        """Push the dashboard's own seat toggle state into the panel.
+
+        Re-renders both seat LEDs with the latest reverse-channel
+        state ORed with the new local toggle state, so the LED
+        immediately reflects the user's click even before the
+        reverse-channel echo arrives.
+        """
+        self._local_heating_on = bool(heating_on)
+        self._local_cooling_on = bool(cooling_on)
+        self._render_seat_leds()
+
+    # -- Tk-thread appliers (do the actual widget mutation) --------------
+
+    def _apply_hvac(self, msg: dict) -> None:
+        status = str(msg.get("status", "off")).lower()
+        value = msg.get("value")
+        if status == "on":
+            color = "green"
+        else:
+            color = "red"
+        text = f"value={value!s:<6}  status={status}  src={msg.get('source', '?')}"
+        self._render("hvac", self._hvac_canvas, self._hvac_circle,
+                     self._hvac_text, color, text)
+
+    def _apply_seat(self, msg: dict) -> None:
+        """Reverse-channel sample arrived. Update the per-key memory
+        and re-render both seat LEDs (the toggle state we already
+        know about is taken into account by `_render_seat_leds`)."""
+        key = str(msg.get("key", ""))
+        value = msg.get("value", 0)
+        status = str(msg.get("status", "off")).lower()
+        try:
+            v_int = int(value) if isinstance(value, (int, float)) else 0
+        except Exception:
+            v_int = 0
+        self._seat_keys[key] = (v_int, status)
+        self._render_seat_leds()
+
+    def _render_seat_leds(self) -> None:
+        """Recompute both seat LEDs from `_seat_keys` (reverse-channel)
+        and `_local_*_on` (dashboard toggle state).
+
+        Heating LED  is red if any of these is true:
+          - the dashboard Seat Heating toggle is on
+          - `seat.heating` signal value is non-zero
+          - `seat.heating_cooling` signal value is > 0
+            (HeatingCooling > 0 means heating per VSS)
+
+        Cooling LED  is blue if any of these is true:
+          - the dashboard Seat Cooling toggle is on
+          - `seat.heating_cooling` signal value is non-zero in EITHER
+            direction. We intentionally relax this beyond strict VSS
+            (which only treats HC<0 as cooling) because the EV Range
+            Extender prototype on `playground.digital.auto` writes
+            `HeatingCooling = 1` to mean "seat module engaged" - the
+            user expects the Cooling LED to light up alongside the
+            Heating LED in that case, because the EV-app drives both
+            channels in lockstep.
+        """
+        heating_val, _heating_status = self._seat_keys.get(
+            "seat.heating", (None, "off")
+        )
+        hc_val, _hc_status = self._seat_keys.get(
+            "seat.heating_cooling", (None, "off")
+        )
+
+        # ---- Heating LED ----------------------------------------------
+        heating_engaged = (
+            self._local_heating_on
+            or (heating_val is not None and heating_val != 0)
+            or (hc_val is not None and hc_val > 0)
+        )
+        if heating_engaged:
+            heat_color = "red"
+            heat_label = "ON  (warming)"
+        else:
+            heat_color = "grey"
+            heat_label = "off"
+        heat_text = (f"toggle={'on' if self._local_heating_on else 'off':<3}"
+                     f"  heating={heating_val if heating_val is not None else '?'}"
+                     f"  hc={hc_val if hc_val is not None else '?'}"
+                     f"  -> {heat_label}")
+        self._render("seat_heat",
+                     self._seat_heat_canvas, self._seat_heat_circle,
+                     self._seat_heat_text, heat_color, heat_text)
+
+        # ---- Cooling LED ----------------------------------------------
+        cooling_engaged = (
+            self._local_cooling_on
+            or (hc_val is not None and hc_val != 0)
+        )
+        if cooling_engaged:
+            cool_color = "blue"
+            cool_label = "ON  (cooling)"
+        else:
+            cool_color = "grey"
+            cool_label = "off"
+        cool_text = (f"toggle={'on' if self._local_cooling_on else 'off':<3}"
+                     f"  hc={hc_val if hc_val is not None else '?'}"
+                     f"  -> {cool_label}")
+        self._render("seat_cool",
+                     self._seat_cool_canvas, self._seat_cool_circle,
+                     self._seat_cool_text, cool_color, cool_text)
+
+    def _render(self, lane: str, canvas: Canvas, oval_id: int,
+                text_var: StringVar, color: str, text: str) -> None:
+        """De-duplicating renderer. Avoids needlessly re-painting Tk."""
+        if self._last_color.get(lane) != color:
+            try:
+                canvas.itemconfigure(oval_id, fill=INDICATOR_COLORS.get(color, "#888"))
+            except Exception:
+                pass
+            self._last_color[lane] = color
+        if self._last_text.get(lane) != text:
+            text_var.set(text)
+            self._last_text[lane] = text
+
+
 class Dashboard:
     def __init__(self, root: Tk, bus: ZenohBus) -> None:
         self.root = root
         self.bus = bus
         self.root.title("EV Range Extender - Hardware Simulator")
-        self.root.geometry("640x520")
+        self.root.geometry("640x740")
         # WSLg ships without an X cursor theme by default, which makes the
         # pointer disappear over Tk windows. Pinning the built-in X11
         # cursor "left_ptr" forces the server to render the fallback
@@ -417,12 +785,28 @@ class Dashboard:
                 row.pack(fill="x", expand=True)
                 self._rows_by_key[sig.key] = SignalRow(row, sig, self._publish)
 
+        # Reverse-channel status indicators (driven by VM2 ECUs)
+        self.indicators = IndicatorPanel(root, root)
+        try:
+            self.bus.subscribe(STATUS_KEY_HVAC, self.indicators.on_hvac_sample)
+            self.bus.subscribe(STATUS_KEY_SEAT, self.indicators.on_seat_sample)
+        except Exception as exc:
+            ts = datetime.now().strftime("%H:%M:%S")
+            # Non-fatal: the dashboard still works as a one-way emitter.
+            self.status_var.set(
+                f"[{ts}]  WARN reverse-channel subscribe failed: {exc}"
+            )
+
         # Status bar
         status = ttk.Frame(root, padding=(8, 4))
         status.pack(fill="x", side="bottom")
         ttk.Label(status, textvariable=self.status_var, anchor="w").pack(fill="x", expand=True)
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # Zenoh keys of the two seat toggles. Used by `_publish` to detect
+    # when it should push toggle state into the IndicatorPanel.
+    _SEAT_TOGGLE_KEYS = ("sim/cabin/seat/heating", "sim/cabin/seat/hc")
 
     def _publish(self, sig: Signal, value: float | int) -> None:
         # Toggle mutex: when a toggle turns on, force its partner toggle
@@ -454,6 +838,28 @@ class Dashboard:
         except Exception as exc:
             ts = datetime.now().strftime("%H:%M:%S")
             self.status_var.set(f"[{ts}]  ERROR publishing {sig.key}: {exc}")
+
+        # If a seat toggle just changed (this one OR its mutex partner
+        # we force-off'd above), push the latest toggle state into the
+        # indicator panel so the LED reflects the user's intent
+        # immediately - even if the EV-app on VM1 keeps overwriting
+        # the actual Kuksa value over the wire.
+        if sig.key in self._SEAT_TOGGLE_KEYS:
+            self._sync_seat_toggle_indicators()
+
+    def _sync_seat_toggle_indicators(self) -> None:
+        """Read the current state of the two seat toggles and forward
+        it into the IndicatorPanel. Safe to call from the Tk thread
+        (we're already in `_publish`, which is invoked from a Tk
+        widget callback)."""
+        heating_row = self._rows_by_key.get("sim/cabin/seat/heating")
+        cooling_row = self._rows_by_key.get("sim/cabin/seat/hc")
+        heating_on = bool(heating_row.is_on()) if heating_row else False
+        cooling_on = bool(cooling_row.is_on()) if cooling_row else False
+        try:
+            self.indicators.set_seat_toggle_state(heating_on, cooling_on)
+        except Exception:
+            pass
 
     def _on_close(self) -> None:
         try:

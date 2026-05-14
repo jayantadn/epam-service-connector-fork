@@ -6,17 +6,32 @@ automatically by the `ev-range-seat.service` systemd unit on boot.
 Role:
     The Seat Control Module is the device-side ECU that owns the
     front-row driver-side seat heating and ventilation/cooling
-    actuators of the local Kuksa Databroker on VM2. It receives
-    setpoints from the host PyTk hardware simulator
-    (`hardware-sim/pytk_dashboard.py`) over Zenoh and writes them
-    into the local `ev-range-cabin` Kuksa Databroker. From there
-    VM2's `zenoh_publisher.py` bridges the values to VM1's
-    `ev-range` Kuksa, which `range_ai.py` consumes.
+    actuators of the local Kuksa Databroker on VM2. It has TWO
+    duties:
+
+    1. Inbound from the host dashboard:
+       Receives setpoints from `hardware-sim/pytk_dashboard.py` over
+       Zenoh on `sim/cabin/seat/heating` and `sim/cabin/seat/hc` and
+       writes them into the local `ev-range-cabin` Kuksa Databroker
+       (logged as `OK`). The kuksa-bridge mirrors the values to VM1.
+
+    2. Inbound from the kuksa-bridge (NEW):
+       Subscribes to both seat VSS paths on its OWN local Kuksa and,
+       on every change, (a) logs an `ACT` line so the actuation is
+       visible in `tail -F /tmp/ev-range-seat.log` and (b) forwards
+       a key/value status envelope to the host dashboard over Zenoh
+       on `dash/status/seat`. This is the path that carries writes
+       made by the EV Range Extender app on VM1.
 
 End-to-end:
 
     pytk_dashboard.py (host, 192.168.100.1)
-        |
+        |   ^
+        |   | zenoh on dash/status/seat
+        |   |   {"key": "seat.heating" | "seat.heating_cooling",
+        |   |    "value": <int>,
+        |   |    "status": "heating" | "cooling" | "off"}
+        |   |
         | zenoh.put on:
         |   sim/cabin/seat/heating  (int8,  0..100   percent)
         |   sim/cabin/seat/hc       (int8, -100..100 percent;
@@ -24,22 +39,34 @@ End-to-end:
         |                            positive = heating)
         v   tcp/192.168.100.11:7462
     seat_ecu.py (this file, VM2)
-        |
-        v
+        |    ^
+        |    | kuksa subscribe_current_values()
+        v    | (ACT log + dashboard forward)
     VM2 ev-range-cabin Kuksa Databroker (127.0.0.1:55555)
         - Vehicle.Cabin.Seat.Row1.DriverSide.Heating         = int
         - Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling  = int
         |
-        | (zenoh_publisher.py forwards over Zenoh to VM1)
+        | (kuksa-bridge bridges over Zenoh to VM1)
         v
-    VM1 ev-range Kuksa Databroker
+    VM1 ev-range Kuksa Databroker  <-- EV Range Extender app writes here
         |
         v
     range_ai.py (recomputes Range)
 
-Wire format:
-    Each Zenoh sample is a tiny JSON document:
+Wire format (host -> ECU):
+    Each Zenoh sample on `sim/cabin/seat/**` is a tiny JSON document:
         {"value": <number>, "source": "<host>", "ts": "<iso>"}
+
+Wire format (ECU -> dashboard, NEW):
+    Each Zenoh sample on `dash/status/seat` is a key/value envelope:
+        {"key": "seat.heating" | "seat.heating_cooling",
+         "value": <int>,
+         "status": "heating" | "cooling" | "off",
+         "source": "vm2",
+         "ts": "<iso>"}
+    The dashboard reduces the two latest-status keys into one seat
+    indicator: red if any signal says "heating", blue if any says
+    "cooling", and blue/off otherwise.
 
 Manual control (when the systemd service is stopped):
     sudo systemctl stop ev-range-seat
@@ -53,7 +80,7 @@ import asyncio
 import json
 import sys
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import zenoh
@@ -64,6 +91,13 @@ from kuksa_client.grpc.aio import VSSClient
 DEFAULT_LISTEN = "tcp/0.0.0.0:7462"
 DEFAULT_KUKSA_HOST = "127.0.0.1"
 DEFAULT_KUKSA_PORT = 55555
+
+# Source tag embedded in every `dash/status/seat` envelope so the
+# dashboard can tell which VM the message came from (forensic only).
+SOURCE_LABEL = "vm2"
+
+# Reverse Zenoh key the dashboard subscribes to.
+DASH_STATUS_KEY = "dash/status/seat"
 
 
 KEY_TO_VSS = {
@@ -78,6 +112,35 @@ KEY_TO_VSS = {
 }
 
 KEY_PREFIX = "sim/cabin/seat/**"
+
+
+# Mapping: local VSS path -> logical key the dashboard renders under.
+# Listed independently of KEY_TO_VSS because the dashboard-forward
+# path is decoupled from the host-Zenoh ingest path.
+VSS_TO_DASH_KEY = {
+    "Vehicle.Cabin.Seat.Row1.DriverSide.Heating":        "seat.heating",
+    "Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling": "seat.heating_cooling",
+}
+
+
+def _seat_status(vss_path: str, value: Any) -> str:
+    """Map a (path, value) pair to the dashboard indicator state.
+
+    Indicator semantics (see module docstring):
+       Heating          > 0  -> "heating"  (dashboard renders red)
+       HeatingCooling   > 0  -> "heating"  (dashboard renders red)
+       HeatingCooling   < 0  -> "cooling"  (dashboard renders blue)
+       all other (=== 0)     -> "off"      (dashboard renders blue/idle)
+    """
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "off"
+    if v > 0:
+        return "heating"
+    if vss_path.endswith("HeatingCooling") and v < 0:
+        return "cooling"
+    return "off"
 
 
 def log(msg: str) -> None:
@@ -166,6 +229,46 @@ async def _consumer(queue: "_LatestValueQueue", kuksa: VSSClient) -> None:
             log(line)
 
 
+async def _dashboard_forwarder(
+    kuksa: VSSClient,
+    dash_pub: "zenoh.Publisher",
+) -> None:
+    """Subscribe to both seat VSS paths on local Kuksa and forward each
+    change to the host dashboard as a `{key, value, status}` envelope.
+
+    See module docstring for the surface contract; semantics are kept
+    intentionally tiny on this side so the dashboard can stay a dumb
+    renderer that just maps `status` to a color.
+    """
+    last_status: dict[str, str] = {}
+    paths = list(VSS_TO_DASH_KEY.keys())
+    async for updates in kuksa.subscribe_current_values(paths):
+        for path, dp in updates.items():
+            if dp is None or dp.value is None:
+                continue
+            dash_key = VSS_TO_DASH_KEY.get(path)
+            if dash_key is None:
+                continue
+            status = _seat_status(path, dp.value)
+            payload = json.dumps({
+                "key": dash_key,
+                "value": int(dp.value) if isinstance(dp.value, (int, float))
+                                       else dp.value,
+                "status": status,
+                "source": SOURCE_LABEL,
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }).encode("utf-8")
+            try:
+                dash_pub.put(payload)
+            except Exception as exc:
+                log(f"ERROR forwarding {path} to dashboard: {exc}")
+                continue
+            changed = last_status.get(path) != status
+            last_status[path] = status
+            tag = "ACT " if changed else "act "
+            log(f"{tag} {path} = {dp.value}  -> dashboard {dash_key} (status={status})")
+
+
 async def run(listen: str, kuksa_host: str, kuksa_port: int) -> None:
     log(f"Connecting to Kuksa Databroker at {kuksa_host}:{kuksa_port}...")
     async with VSSClient(kuksa_host, kuksa_port) as kuksa:
@@ -202,6 +305,18 @@ async def run(listen: str, kuksa_host: str, kuksa_port: int) -> None:
                 queue.offer(vss_path, value, cast, src)
 
             _sub = session.declare_subscriber(KEY_PREFIX, listener)
+
+            # Reverse channel to the host dashboard - declared on the
+            # SAME Zenoh session so the existing TCP peer connection
+            # (host -> ECU) is reused for ECU -> host samples too.
+            dash_pub = session.declare_publisher(DASH_STATUS_KEY)
+            log(f"Reverse channel publisher on '{DASH_STATUS_KEY}' ready.")
+            forwarder_task = asyncio.create_task(
+                _dashboard_forwarder(kuksa, dash_pub)
+            )
+            log(f"Kuksa->dashboard forwarder subscribed to: "
+                f"{', '.join(VSS_TO_DASH_KEY.keys())}")
+
             log("Seat ECU running. Drive values from the host PyTk dashboard. Ctrl+C to stop.")
             try:
                 await stop_event.wait()
@@ -209,6 +324,7 @@ async def run(listen: str, kuksa_host: str, kuksa_port: int) -> None:
                 pass
             finally:
                 consumer_task.cancel()
+                forwarder_task.cancel()
 
 
 def parse_args() -> argparse.Namespace:
