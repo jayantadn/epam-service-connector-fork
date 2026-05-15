@@ -32,6 +32,8 @@ SEED2="$OUTPUT_DIR/seed2.img"
 # the Python sources under ev-range-extender/ are picked up automatically.
 USERDATA1="$OUTPUT_DIR/user-data-vm1.composed"
 USERDATA2="$OUTPUT_DIR/user-data-vm2.composed"
+META1="$OUTPUT_DIR/meta-data-vm1"
+META2="$OUTPUT_DIR/meta-data-vm2"
 
 # -------- CHECK INPUT FILES --------
 if [ ! -f "$INPUT_DIR/user-data-vm1" ] || [ ! -f "$INPUT_DIR/meta-data-vm1" ]; then
@@ -96,10 +98,23 @@ python3 tools/compose_userdata.py \
     --output   "$USERDATA2" \
     --vm       vm2
 
+# -------- WRITE PER-RUN CLOUD-INIT META-DATA --------
+# Fresh instance-id on each setup run forces cloud-init to rerun
+# app deployment and service start commands for existing VM disks.
+RUN_TOKEN="$(date +%Y%m%d%H%M%S)-$$"
+cat > "$META1" <<EOF
+instance-id: vm1-$RUN_TOKEN
+local-hostname: vm1
+EOF
+cat > "$META2" <<EOF
+instance-id: vm2-$RUN_TOKEN
+local-hostname: vm2
+EOF
+
 # -------- CREATE SEED IMAGES --------
 echo "[INFO] Creating cloud-init seeds..."
-cloud-localds --network-config "$INPUT_DIR/network-vm1.yaml" "$SEED1" "$USERDATA1" "$INPUT_DIR/meta-data-vm1"
-cloud-localds --network-config "$INPUT_DIR/network-vm2.yaml" "$SEED2" "$USERDATA2" "$INPUT_DIR/meta-data-vm2"
+cloud-localds --network-config "$INPUT_DIR/network-vm1.yaml" "$SEED1" "$USERDATA1" "$META1"
+cloud-localds --network-config "$INPUT_DIR/network-vm2.yaml" "$SEED2" "$USERDATA2" "$META2"
 
 echo "======================================"
 echo "[SUCCESS] SETUP COMPLETED"

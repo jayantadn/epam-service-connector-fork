@@ -44,6 +44,8 @@ SEED2       = OUTPUT_DIR / "seed2.img"
 # the Python sources under ev-range-extender/ are picked up automatically.
 USERDATA1   = OUTPUT_DIR / "user-data-vm1.composed"
 USERDATA2   = OUTPUT_DIR / "user-data-vm2.composed"
+META1       = OUTPUT_DIR / "meta-data-vm1"
+META2       = OUTPUT_DIR / "meta-data-vm2"
 
 BANNER_THIN = "=" * 38
 BANNER_WIDE = "=" * 56
@@ -56,6 +58,20 @@ def run(cmd, check=True, cwd=None):
     used for idempotent ip/iptables steps that fail on a re-run.
     """
     return subprocess.run(cmd, check=check, cwd=cwd or REPO_ROOT)
+
+
+def write_meta(path: Path, vm_name: str, run_token: str) -> None:
+    """Write per-run NoCloud meta-data so cloud-init reruns app bootstrap.
+
+    A static instance-id makes cloud-init skip once-per-instance modules
+    (including app deployment/start commands) on subsequent runs. A fresh
+    instance-id per setup invocation forces those app steps to run again.
+    """
+    path.write_text(
+        f"instance-id: {vm_name}-{run_token}\n"
+        f"local-hostname: {vm_name}\n",
+        encoding="utf-8",
+    )
 
 
 def main() -> int:
@@ -144,17 +160,22 @@ def main() -> int:
         "--vm",       "vm2",
     ])
 
+    # -------- WRITE PER-RUN CLOUD-INIT META-DATA --------
+    run_token = f"{int(time.time())}-{os.getpid()}"
+    write_meta(META1, "vm1", run_token)
+    write_meta(META2, "vm2", run_token)
+
     # -------- CREATE SEED IMAGES --------
     print("[INFO] Creating cloud-init seeds...")
     run([
         "cloud-localds",
         "--network-config", str(INPUT_DIR / "network-vm1.yaml"),
-        str(SEED1), str(USERDATA1), str(INPUT_DIR / "meta-data-vm1"),
+        str(SEED1), str(USERDATA1), str(META1),
     ])
     run([
         "cloud-localds",
         "--network-config", str(INPUT_DIR / "network-vm2.yaml"),
-        str(SEED2), str(USERDATA2), str(INPUT_DIR / "meta-data-vm2"),
+        str(SEED2), str(USERDATA2), str(META2),
     ])
 
     print(BANNER_THIN)
