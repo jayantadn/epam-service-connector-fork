@@ -484,47 +484,31 @@ class SignalRow:
         self.scale.set(value)
         self.publish(self.sig, value)
 
-    def get_value(self) -> float:
-        """Return the row's current numeric value."""
-        return float(self._float)
+    def set_value_and_publish(self, value: float) -> None:
+        """Programmatically move this slider to *value* and publish it.
 
-    def set_value(self, value: float | int, publish: bool = True) -> None:
-        """Programmatically set a numeric row and optionally publish it.
-
-        This is used by the simulation controls for battery drain.
+        Called by the battery drain simulation on every tick so the GUI
+        stays in sync with the simulated values.  Toggle rows are
+        ignored (toggles are not part of the drain loop).
         """
         if self.sig.is_toggle:
             return
-
-        bounded = max(self.sig.vmin, min(self.sig.vmax, float(value)))
         if self.sig.is_int:
-            bounded = int(round(bounded))
+            value = int(round(value))
+        value = max(self.sig.vmin, min(self.sig.vmax, value))
+        if self._float == value:
+            return
+        self._float = value
+        self.scale.set(value)
+        if self.sig.is_int and self.var is not None:
+            self.var.set(int(value))
         else:
-            bounded = round(bounded, 2)
-
-        self._building = True
-        try:
-            self._float = bounded
-            self.scale.set(bounded)
-            if self.sig.is_int:
-                if self.var is not None:
-                    self.var.set(int(bounded))
-                try:
-                    self.spin.delete(0, "end")
-                    self.spin.insert(0, str(int(bounded)))
-                except Exception:
-                    pass
-            else:
-                try:
-                    self.spin.delete(0, "end")
-                    self.spin.insert(0, f"{bounded:.2f}")
-                except Exception:
-                    pass
-        finally:
-            self._building = False
-
-        if publish:
-            self.publish(self.sig, bounded)
+            try:
+                self.spin.delete(0, "end")
+                self.spin.insert(0, f"{value:.2f}")
+            except Exception:
+                pass
+        self.publish(self.sig, value)
 
 
 class IndicatorPanel:
@@ -786,10 +770,6 @@ class IndicatorPanel:
 
 
 class Dashboard:
-    _BATTERY_SOC_KEY = "sim/battery/soc"
-    _AUTO_DRAIN_INTERVAL_MS = 1500
-    _AUTO_DRAIN_STEP = 1.0
-
     def __init__(self, root: Tk, bus: ZenohBus) -> None:
         self.root = root
         self.bus = bus
@@ -818,14 +798,10 @@ class Dashboard:
             pass
 
         self.status_var = StringVar(value="Ready. Move a slider or toggle to publish.")
-        self._sim_running = False
-        self._drain_after_id: str | None = None
 
         # Index of every SignalRow by its Zenoh key, so toggle mutex
         # can locate its partner row in `_publish` below.
         self._rows_by_key: dict[str, SignalRow] = {}
-
-        self._build_sim_controls(root)
 
         for section_title, sigs in ALL_SECTIONS:
             frame = ttk.LabelFrame(root, text=section_title, padding=(8, 6))
@@ -834,6 +810,30 @@ class Dashboard:
                 row = Frame(frame)
                 row.pack(fill="x", expand=True)
                 self._rows_by_key[sig.key] = SignalRow(row, sig, self._publish)
+
+        # --- Battery Drain Simulation controls --------------------------------
+        self._drain_running = False
+        self._drain_after_id: str | None = None
+
+        sim_frame = ttk.LabelFrame(root, text="Drive Simulation", padding=(8, 6))
+        sim_frame.pack(fill="x", expand=False, padx=10, pady=(8, 0))
+        sim_inner = Frame(sim_frame)
+        sim_inner.pack(fill="x", expand=True, padx=4, pady=4)
+        self._sim_btn_var = StringVar(value="\u25b6  Start Simulation")
+        self._sim_btn = ttk.Button(
+            sim_inner,
+            textvariable=self._sim_btn_var,
+            command=self._toggle_simulation,
+            width=24,
+        )
+        self._sim_btn.grid(row=0, column=0, padx=(0, 12), pady=2)
+        self._sim_status_var = StringVar(
+            value="Idle \u2014 press Start to begin battery drain"
+        )
+        ttk.Label(sim_inner, textvariable=self._sim_status_var, anchor="w").grid(
+            row=0, column=1, sticky="we", padx=4
+        )
+        sim_inner.columnconfigure(1, weight=1)
 
         # Reverse-channel status indicators (driven by VM2 ECUs)
         self.indicators = IndicatorPanel(root, root)
@@ -853,18 +853,6 @@ class Dashboard:
         ttk.Label(status, textvariable=self.status_var, anchor="w").pack(fill="x", expand=True)
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-
-    def _build_sim_controls(self, parent: Tk) -> None:
-        controls = ttk.LabelFrame(parent, text="Drive Simulation", padding=(8, 6))
-        controls.pack(fill="x", expand=False, padx=10, pady=(8, 0))
-
-        row = Frame(controls)
-        row.pack(fill="x", expand=True)
-
-        self._start_stop_btn = ttk.Button(row, text="Start Car", command=self._toggle_simulation)
-        self._start_stop_btn.grid(row=0, column=0, padx=(4, 12), pady=4, sticky="w")
-
-        row.columnconfigure(1, weight=1)
 
     # Zenoh keys of the two seat toggles. Used by `_publish` to detect
     # when it should push toggle state into the IndicatorPanel.
@@ -923,85 +911,85 @@ class Dashboard:
         except Exception:
             pass
 
+    # ---- Battery drain simulation -------------------------------------------
+
+    _DRAIN_TICK_MS: int = 1000        # milliseconds between ticks
+    _SOC_DRAIN_PER_TICK: float = 0.3  # % SoC removed per tick (≈5.5 min full drain)
+
     def _toggle_simulation(self) -> None:
-        if self._sim_running:
-            self._stop_simulation()
+        """Start or stop the battery drain simulation."""
+        if self._drain_running:
+            # --- Stop ---
+            self._drain_running = False
+            if self._drain_after_id is not None:
+                try:
+                    self.root.after_cancel(self._drain_after_id)
+                except Exception:
+                    pass
+                self._drain_after_id = None
+            self._sim_btn_var.set("\u25b6  Start Simulation")
+            self._sim_status_var.set("Stopped.")
         else:
-            self._start_simulation()
+            # --- Start ---
+            self._drain_running = True
+            self._sim_btn_var.set("\u25a0  Stop Simulation")
+            self._sim_status_var.set("Running \u2014 battery draining\u2026")
+            self._drain_after_id = self.root.after(
+                self._DRAIN_TICK_MS, self._drain_tick
+            )
 
-    def _start_simulation(self) -> None:
-        self._sim_running = True
-        self._start_stop_btn.configure(text="Stop Car")
-        self._set_status("Simulation started")
-        self._schedule_auto_drain(reset=True)
+    def _drain_tick(self) -> None:
+        """One simulation tick: drain SoC by _SOC_DRAIN_PER_TICK and
+        adjust Voltage proportionally.  Reschedules itself via
+        root.after so it always runs on the Tk event loop."""
+        if not self._drain_running:
+            return
 
-    def _stop_simulation(self) -> None:
-        self._sim_running = False
-        self._start_stop_btn.configure(text="Start Car")
-        self._cancel_auto_drain()
-        self._set_status("Simulation stopped")
+        soc_row = self._rows_by_key.get("sim/battery/soc")
+        volt_row = self._rows_by_key.get("sim/battery/voltage")
 
-    def _set_status(self, text: str) -> None:
+        if soc_row is None:
+            # Signal catalogue changed; give up gracefully.
+            self._drain_running = False
+            return
+
+        new_soc = round(
+            max(0.0, soc_row._float - self._SOC_DRAIN_PER_TICK), 2
+        )
+        soc_row.set_value_and_publish(new_soc)
+
+        # Voltage tracks SoC linearly: 320 V at 0 %, 420 V at 100 %
+        if volt_row is not None:
+            new_voltage = round(320.0 + (new_soc / 100.0) * 100.0, 1)
+            volt_row.set_value_and_publish(new_voltage)
+
         ts = datetime.now().strftime("%H:%M:%S")
-        self.status_var.set(f"[{ts}]  {text}")
+        self._sim_status_var.set(
+            f"[{ts}]  Battery draining \u2014 SoC: {new_soc:.1f} %"
+        )
 
-    def _get_battery_soc_row(self) -> SignalRow | None:
-        row = self._rows_by_key.get(self._BATTERY_SOC_KEY)
-        if row is None or row.sig.is_toggle:
-            return None
-        return row
-
-    def _reduce_battery_once(self, step: float) -> bool:
-        row = self._get_battery_soc_row()
-        if row is None:
-            self._set_status("Battery SOC control not found")
-            return False
-
-        current = row.get_value()
-        next_value = max(row.sig.vmin, current - step)
-        if next_value == current:
-            self._set_status("Battery already at minimum")
-            return False
-
-        row.set_value(next_value, publish=True)
-        return True
-
-    def _schedule_auto_drain(self, reset: bool = False) -> None:
-        if reset:
-            self._cancel_auto_drain()
-
-        if not self._sim_running:
+        if new_soc <= 0.0:
+            # Fully depleted — stop automatically.
+            self._drain_running = False
+            self._drain_after_id = None
+            self._sim_btn_var.set("\u25b6  Start Simulation")
+            self._sim_status_var.set(
+                "Battery depleted. Reset the Battery % slider to restart."
+            )
             return
 
         self._drain_after_id = self.root.after(
-            self._AUTO_DRAIN_INTERVAL_MS,
-            self._auto_drain_tick,
+            self._DRAIN_TICK_MS, self._drain_tick
         )
 
-    def _cancel_auto_drain(self) -> None:
+    def _on_close(self) -> None:
+        self._drain_running = False
         if self._drain_after_id is not None:
             try:
                 self.root.after_cancel(self._drain_after_id)
             except Exception:
                 pass
-            self._drain_after_id = None
-
-    def _auto_drain_tick(self) -> None:
-        self._drain_after_id = None
-        if not self._sim_running:
-            return
-
-        changed = self._reduce_battery_once(self._AUTO_DRAIN_STEP)
-        if not changed:
-            self._set_status("Battery reached minimum, stopping simulation")
-            self._stop_simulation()
-            return
-
-        self._schedule_auto_drain()
-
-    def _on_close(self) -> None:
         try:
-            self._cancel_auto_drain()
             self.bus.close()
         finally:
             self.root.destroy()
