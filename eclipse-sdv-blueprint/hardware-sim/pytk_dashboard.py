@@ -803,28 +803,20 @@ class Dashboard:
         # can locate its partner row in `_publish` below.
         self._rows_by_key: dict[str, SignalRow] = {}
 
-        for section_title, sigs in ALL_SECTIONS:
-            frame = ttk.LabelFrame(root, text=section_title, padding=(8, 6))
-            frame.pack(fill="x", expand=False, padx=10, pady=(8, 0))
-            for sig in sigs:
-                row = Frame(frame)
-                row.pack(fill="x", expand=True)
-                self._rows_by_key[sig.key] = SignalRow(row, sig, self._publish)
-
         # --- Battery Drain Simulation controls --------------------------------
         self._drain_running = False
         self._drain_after_id: str | None = None
 
-        sim_frame = ttk.LabelFrame(root, text="Drive Simulation", padding=(8, 6))
+        sim_frame = ttk.LabelFrame(root, text="Drive", padding=(8, 6))
         sim_frame.pack(fill="x", expand=False, padx=10, pady=(8, 0))
         sim_inner = Frame(sim_frame)
         sim_inner.pack(fill="x", expand=True, padx=4, pady=4)
-        self._sim_btn_var = StringVar(value="\u25b6  Start Simulation")
+        self._sim_btn_var = StringVar(value="\u25b6  Start")
         self._sim_btn = ttk.Button(
             sim_inner,
             textvariable=self._sim_btn_var,
             command=self._toggle_simulation,
-            width=24,
+            width=18,
         )
         self._sim_btn.grid(row=0, column=0, padx=(0, 12), pady=2)
         self._sim_status_var = StringVar(
@@ -834,6 +826,14 @@ class Dashboard:
             row=0, column=1, sticky="we", padx=4
         )
         sim_inner.columnconfigure(1, weight=1)
+
+        for section_title, sigs in ALL_SECTIONS:
+            frame = ttk.LabelFrame(root, text=section_title, padding=(8, 6))
+            frame.pack(fill="x", expand=False, padx=10, pady=(8, 0))
+            for sig in sigs:
+                row = Frame(frame)
+                row.pack(fill="x", expand=True)
+                self._rows_by_key[sig.key] = SignalRow(row, sig, self._publish)
 
         # Reverse-channel status indicators (driven by VM2 ECUs)
         self.indicators = IndicatorPanel(root, root)
@@ -914,7 +914,7 @@ class Dashboard:
     # ---- Battery drain simulation -------------------------------------------
 
     _DRAIN_TICK_MS: int = 1000        # milliseconds between ticks
-    _SOC_DRAIN_PER_TICK: float = 0.3  # % SoC removed per tick (≈5.5 min full drain)
+    _SOC_DRAIN_PER_TICK: float = 1.0 # % SoC removed per tick (≈3.3 min full drain)
 
     def _toggle_simulation(self) -> None:
         """Start or stop the battery drain simulation."""
@@ -927,12 +927,12 @@ class Dashboard:
                 except Exception:
                     pass
                 self._drain_after_id = None
-            self._sim_btn_var.set("\u25b6  Start Simulation")
+            self._sim_btn_var.set("\u25b6  Start")
             self._sim_status_var.set("Stopped.")
         else:
             # --- Start ---
             self._drain_running = True
-            self._sim_btn_var.set("\u25a0  Stop Simulation")
+            self._sim_btn_var.set("\u25a0  Stop")
             self._sim_status_var.set("Running \u2014 battery draining\u2026")
             self._drain_after_id = self.root.after(
                 self._DRAIN_TICK_MS, self._drain_tick
@@ -972,7 +972,7 @@ class Dashboard:
             # Fully depleted — stop automatically.
             self._drain_running = False
             self._drain_after_id = None
-            self._sim_btn_var.set("\u25b6  Start Simulation")
+            self._sim_btn_var.set("\u25b6  Start")
             self._sim_status_var.set(
                 "Battery depleted. Reset the Battery % slider to restart."
             )
