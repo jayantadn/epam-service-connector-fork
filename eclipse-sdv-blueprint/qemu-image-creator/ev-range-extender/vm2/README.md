@@ -9,7 +9,6 @@ plus three Python services that auto-start on every boot via systemd.
 |---|---|---|---|
 | HVAC ECU | `hvac_ecu.py` | `ev-range-hvac.service` | Subscribes to host PyTk Zenoh key `sim/cabin/temp` on `tcp/0.0.0.0:7461` and writes the value into VM2's Kuksa under `Vehicle.Cabin.HVAC.AmbientAirTemperature`. |
 | Seat Control Module | `seat_ecu.py` | `ev-range-seat.service` | Subscribes to host PyTk Zenoh keys `sim/cabin/seat/heating` + `sim/cabin/seat/hc` on `tcp/0.0.0.0:7462` and writes them into VM2's Kuksa under `Vehicle.Cabin.Seat.Row1.DriverSide.{Heating,HeatingCooling}`. |
-| VM2 → VM1 Zenoh bridge (publisher) | `zenoh_publisher.py` | `ev-range-zenoh-publisher.service` | Subscribes to those three cabin signals on VM2's Kuksa and republishes every update over Zenoh to VM1's `zenoh_client.py` (`tcp/192.168.100.10:7447`). |
 
 ## VSS signals on VM2's Kuksa
 
@@ -24,27 +23,6 @@ plus three Python services that auto-start on every boot via systemd.
 > `Seat.Ventilation` leaf in COVESA — the standard way to express
 > ventilation on a seat is `HeatingCooling` with a negative percent,
 > which is what the dashboard publishes when "Seat Cooling" is on.
-
-## Bridge to VM1
-
-`zenoh_publisher.py` opens a Zenoh peer session and `connect`s to VM1
-on `tcp/192.168.100.10:7447` (where `zenoh_client.py` is listening).
-On every cabin-signal update on VM2's Kuksa, it pushes a tiny JSON
-payload like:
-
-```json
-{
-  "path": "Vehicle.Cabin.HVAC.AmbientAirTemperature",
-  "value": 50.0,
-  "unit": "celsius",
-  "timestamp": "2026-...Z",
-  "source": "vm2"
-}
-```
-
-…on the Zenoh key `ev-range/vm2/.../<vss-path>`. `zenoh_client.py`
-on VM1 whitelists the same VSS paths and writes the values straight
-into VM1's Kuksa.
 
 ## VSS catalog sanity check
 
@@ -79,19 +57,17 @@ sudo /usr/local/bin/evrange-start-databroker
 
 ## Inspect / debug
 
-All three services log to `/tmp/ev-range-*.log` (world-readable, no
-sudo needed):
+Both services log to `/tmp/ev-range-*.log` (world-readable, no sudo needed):
 
 ```bash
 tail -f /tmp/ev-range-hvac.log
 tail -f /tmp/ev-range-seat.log
-tail -f /tmp/ev-range-zenoh-publisher.log
 ```
 
 Status / restart:
 
 ```bash
-systemctl status   ev-range-hvac ev-range-seat ev-range-zenoh-publisher
+systemctl status   ev-range-hvac ev-range-seat
 sudo systemctl restart ev-range-hvac
 ```
 

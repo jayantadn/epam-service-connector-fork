@@ -202,8 +202,7 @@ runcmd:
   - systemctl restart ssh
 
   # Install Python packages required by the EV Range Extender Python apps.
-  #   - kuksa-client: ev-range-extender/vm1/range_ai.py + zenoh_client.py + someip_client.py
-  #   - eclipse-zenoh: zenoh-demo/ + ev-range-extender/vm1/zenoh_client.py (legacy/reference path)
+  #   - kuksa-client: ev-range-extender/vm1/range_ai.py + someip_client.py
   #   - someipy (>=1.0,<2.0): someip-demo/ + ev-range-extender/vm1/someip_client.py (active SOME/IP / Eclipse-SCore path)
   #   - grpcio + grpcio-tools: grpc-demo/
   - |

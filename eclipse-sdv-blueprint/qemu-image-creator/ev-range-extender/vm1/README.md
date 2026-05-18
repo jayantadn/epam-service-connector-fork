@@ -9,7 +9,6 @@ VM1 by hand during the demo.**
 |---|---|---|---|
 | Battery Monitoring System | `bms.py` | `ev-range-bms.service` | Subscribes to host PyTk Zenoh keys (`sim/battery/*`) on `tcp/0.0.0.0:7460` and writes the values into VM1's Kuksa under `Vehicle.Powertrain.TractionBattery.*`. |
 | Range Compute AI | `range_ai.py` | `ev-range-range-ai.service` | Subscribes to 3 battery + 3 cabin signals on VM1's Kuksa, computes range, publishes `Vehicle.Powertrain.Range`. |
-| VM2 → VM1 Zenoh bridge (subscriber) | `zenoh_client.py` | `ev-range-zenoh-client.service` | Listens on `tcp/0.0.0.0:7447` for cabin updates from `zenoh_publisher.py` on VM2 and writes them into VM1's Kuksa so `range_ai.py` can use them. |
 
 ## VSS signals on VM1's Kuksa
 
@@ -22,9 +21,9 @@ this one broker.
 | `Vehicle.Powertrain.TractionBattery.CurrentVoltage` | float (V) | host PyTk dashboard → Zenoh → `bms.py` |
 | `Vehicle.Powertrain.TractionBattery.CurrentCurrent` | float (A) | host PyTk dashboard → Zenoh → `bms.py` |
 | `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` | float (%) | host PyTk dashboard → Zenoh → `bms.py` |
-| `Vehicle.Cabin.HVAC.AmbientAirTemperature` | float | host (Fan Speed slider) → `hvac_ecu.py` (VM2) → `zenoh_publisher.py` (VM2) → `zenoh_client.py` (VM1) |
-| `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` | int (% 0..100) | host (Seat Heating toggle) → `seat_ecu.py` (VM2) → bridge → `zenoh_client.py` |
-| `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` | int (% -100..100) | host (Seat Cooling toggle) → `seat_ecu.py` (VM2) → bridge → `zenoh_client.py` |
+| `Vehicle.Cabin.HVAC.AmbientAirTemperature` | float | host (Fan Speed slider) → `hvac_ecu.py` (VM2) → kuksa-bridge → VM1's Kuksa |
+| `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` | int (% 0..100) | host (Seat Heating toggle) → `seat_ecu.py` (VM2) → kuksa-bridge → VM1's Kuksa |
+| `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` | int (% -100..100) | host (Seat Cooling toggle) → `seat_ecu.py` (VM2) → kuksa-bridge → VM1's Kuksa |
 | `Vehicle.Powertrain.Range` | uint32 (km) | written by `range_ai.py` |
 
 > **Signal note for the dashboard's "Fan Speed" slider.** The slider

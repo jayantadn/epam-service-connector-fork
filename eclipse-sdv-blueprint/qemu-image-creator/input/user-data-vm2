@@ -222,9 +222,8 @@ runcmd:
   - ldconfig
 
   # Install Python packages required by the EV Range Extender VM2 components:
-  #   - kuksa-client: vm2/zenoh_publisher.py + vm2/someip_publisher.py
-  #     (both subscribe to VM2's local Kuksa Databroker)
-  #   - eclipse-zenoh: zenoh-demo/ + vm2/zenoh_publisher.py (legacy/reference transport)
+  #   - kuksa-client: vm2/someip_publisher.py
+  #     (subscribes to VM2's local Kuksa Databroker)
   #   - someipy (>=1.0,<2.0): someip-demo/ + vm2/someip_publisher.py
   #     (active SOME/IP / Eclipse-SCore transport for the EV Range Extender demo)
   #   - grpcio + grpcio-tools: grpc-demo (server.py + generate.sh)

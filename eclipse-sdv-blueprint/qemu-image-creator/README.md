@@ -48,18 +48,18 @@ WSL / Linux host (192.168.100.1 on br0)
        |   -> Vehicle.Powertrain. |   |   -> Vehicle.Cabin.Seat.Row1. |
        |      Range               |   |      DriverSide.{Heating,HC}  |
        |                          |   |                               |
-       | zenoh-client.service  <--+--<+ zenoh-publisher.service       |
-       |   tcp/7447 listener      |   |   forwards VM2 cabin signals  |
+       | kuksa-bridge.service  <--+---+-> kuksa-bridge.service       |
+       |   tcp/7448 bidirectional |   |   (Zenoh) syncs cabin signals |
        +--------------------------+   +-------------------------------+
 ```
 
-**Six systemd services run automatically on every boot — three per VM.**
+**Four systemd services run automatically on every boot — two per VM.**
 
 | VM1 (HPC, 192.168.100.10) | VM2 (Zonal, 192.168.100.11) |
 |---|---|
 | `ev-range-bms.service` | `ev-range-hvac.service` |
 | `ev-range-range-ai.service` | `ev-range-seat.service` |
-| `ev-range-zenoh-client.service` | `ev-range-zenoh-publisher.service` |
+| `ev-range-kuksa-bridge.service` | `ev-range-kuksa-bridge.service` |
 
 You never log into the VMs to start anything.
 
@@ -75,8 +75,8 @@ You never log into the VMs to start anything.
 | `tools/compose_userdata.py` | Build-time helper that injects every Python file under `ev-range-extender/` plus six systemd unit files into copies of the cloud-init templates. Outputs `output/user-data-vm{1,2}.composed`. |
 | `input/user-data-vm1`, `input/user-data-vm2` | Cloud-init **templates**: install docker + Python deps, start the SDV Runtime container with the standard COVESA VSS catalog. |
 | `input/network-vm1.yaml`, `input/network-vm2.yaml` | Static IP for the bridge NIC; DHCP for the SLIRP NIC (outbound internet). |
-| `ev-range-extender/vm1/` | `bms.py`, `range_ai.py`, `zenoh_client.py` (auto-deployed to VM1). |
-| `ev-range-extender/vm2/` | `hvac_ecu.py`, `seat_ecu.py`, `zenoh_publisher.py` (auto-deployed to VM2). |
+| `ev-range-extender/vm1/` | `bms.py`, `range_ai.py` (auto-deployed to VM1). |
+| `ev-range-extender/vm2/` | `hvac_ecu.py`, `seat_ecu.py` (auto-deployed to VM2). |
 | `hardware-sim/pytk_dashboard.py` | The host-side Tk GUI you interact with during the demo. |
 | `zenoh-demo/` | A bare Zenoh pub/sub example (independent of the EV demo). |
 | `output/` | Generated qcow2 disks, seed images, composed cloud-init, base Ubuntu image. Gitignored. |
@@ -241,11 +241,11 @@ ssh ubuntu@192.168.100.11 \
 # Live logs (no sudo needed — log files are world-readable)
 ssh ubuntu@192.168.100.10 'tail -f /tmp/ev-range-bms.log'
 ssh ubuntu@192.168.100.10 'tail -f /tmp/ev-range-range-ai.log'
-ssh ubuntu@192.168.100.10 'tail -f /tmp/ev-range-zenoh-client.log'
+ssh ubuntu@192.168.100.10 'tail -f /tmp/ev-range-kuksa-bridge.log'
 
 ssh ubuntu@192.168.100.11 'tail -f /tmp/ev-range-hvac.log'
 ssh ubuntu@192.168.100.11 'tail -f /tmp/ev-range-seat.log'
-ssh ubuntu@192.168.100.11 'tail -f /tmp/ev-range-zenoh-publisher.log'
+ssh ubuntu@192.168.100.11 'tail -f /tmp/ev-range-kuksa-bridge.log'
 
 # Restart one if it's misbehaving
 ssh ubuntu@192.168.100.10 'sudo systemctl restart ev-range-bms'
@@ -321,8 +321,8 @@ listening on `:55555` (`ExecStartPre`). If the broker eventually came
 up but the unit had already exited, restart it once:
 
 ```bash
-ssh ubuntu@192.168.100.10 'sudo systemctl restart ev-range-bms ev-range-range-ai ev-range-zenoh-client'
-ssh ubuntu@192.168.100.11 'sudo systemctl restart ev-range-hvac ev-range-seat ev-range-zenoh-publisher'
+ssh ubuntu@192.168.100.10 'sudo systemctl restart ev-range-bms ev-range-range-ai ev-range-kuksa-bridge'
+ssh ubuntu@192.168.100.11 'sudo systemctl restart ev-range-hvac ev-range-seat ev-range-kuksa-bridge'
 ```
 
 If a service still won't start, dump the journal:
@@ -342,8 +342,8 @@ Check, in order:
    ```
 2. The cross-VM bridge pair is running (cabin signals only):
    ```bash
-   ssh ubuntu@192.168.100.10 'systemctl is-active ev-range-zenoh-client'
-   ssh ubuntu@192.168.100.11 'systemctl is-active ev-range-zenoh-publisher'
+   ssh ubuntu@192.168.100.10 'systemctl is-active ev-range-kuksa-bridge'
+   ssh ubuntu@192.168.100.11 'systemctl is-active ev-range-kuksa-bridge'
    ```
 3. `range_ai.py` is running:
    ```bash

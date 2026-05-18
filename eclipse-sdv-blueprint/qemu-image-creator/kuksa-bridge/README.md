@@ -39,15 +39,11 @@ JSON configs (the bridge code itself is unchanged).
 > samples whose attachment is `"currentValue"`). Two instances on two
 > Databrokers therefore *do not* mirror current values to each other,
 > which is exactly what the cabin pipeline needs. `kuksa-bridge` is a
-> small, config-driven Python service that does mirror current values,
-> while reusing the same JSON wire envelope our existing
-> `zenoh_publisher.py` / `zenoh_client.py` pair already uses.
+> small, config-driven Python service that does mirror current values.
 
-This component is deployed alongside, not instead of, the legacy
-`zenoh_publisher.service` (VM2) / `zenoh_client.service` (VM1) for
-this first cut so the demo keeps working while we validate the new
-bridge end-to-end. They run on different Zenoh ports (legacy `7447`
-vs `kuksa-bridge` `7448`) so they cannot collide.
+`kuksa-bridge` is now the primary bridge for VSS synchronization between VMs,
+running on Zenoh port `7448`. Legacy components (`zenoh_publisher.py` and
+`zenoh_client.py`) have been removed.
 
 ## What it does
 
@@ -157,22 +153,9 @@ exits without touching Kuksa or Zenoh.
 
 ## Side-by-side with the legacy bridge
 
-During this Phase A cutover, both bridges are enabled by default:
-
 | Bridge | VM1 unit | VM2 unit | Zenoh port | Direction |
 |---|---|---|---|---|
-| Legacy (`zenoh_publisher.py` + `zenoh_client.py`) | `ev-range-zenoh-client.service` | `ev-range-zenoh-publisher.service` | `7447` | One-way: cabin VM2 → VM1 |
 | `kuksa-bridge` (this folder) | `ev-range-kuksa-bridge.service` | `ev-range-kuksa-bridge.service` | `7448` | Two-way: 3 cabin signals VM2 ↔ VM1 |
-
-For the cabin signals both bridges write the same value into VM1's
-Kuksa — that is harmless (the broker dedups identical re-writes, and
-each bridge dedups locally with a `last_sent` cache). The legacy
-pair has never carried the VM1 → VM2 direction; that's the
-capability the new `kuksa-bridge` adds.
-
-The legacy logs are `/tmp/ev-range-zenoh-{publisher,client}.log`; the
-new bridge logs to `/tmp/ev-range-kuksa-bridge.log`. Compare while
-demoing to convince yourself they agree on the cabin signals.
 
 ## Watch the new bridge live
 
@@ -214,20 +197,15 @@ ssh ubuntu@192.168.100.11 \
 
 ## Once the new bridge is trusted
 
-Phase B (a separate change, not done in this cutover) will:
+✅ **Phase B complete:** Legacy components removed.
 
-1. Disable + remove `ev-range-zenoh-publisher.service` and
+1. ✅ Disabled + removed `ev-range-zenoh-publisher.service` and
    `ev-range-zenoh-client.service`.
-2. Delete `ev-range-extender/vm1/zenoh_client.py` and
-   `ev-range-extender/vm2/zenoh_publisher.py`.
-3. Update the architecture diagram + the top-level README to point at
-   `kuksa-bridge/` as the only Zenoh-based bridge in the project.
+2. ✅ Deleted `ev-range-extender/vm1/zenoh_client.py` and
+   `ev-range-extender/vm2/zenoh_publisher.py` from cloud-init.
+3. ✅ Architecture now points at `kuksa-bridge/` as the only Zenoh-based bridge.
 
-To preview that state on a single VM without touching the source:
-
-```bash
-ssh ubuntu@192.168.100.11 'sudo systemctl disable --now ev-range-zenoh-publisher'
-ssh ubuntu@192.168.100.10 'sudo systemctl disable --now ev-range-zenoh-client'
+The bridge is the primary mechanism for bidirectional VSS synchronization.
 ```
 
 Then move sliders on the dashboard and check that
