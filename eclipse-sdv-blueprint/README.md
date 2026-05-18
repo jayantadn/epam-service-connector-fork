@@ -39,7 +39,7 @@ The journey below shows how the system interacts across three steps — from the
 
 You can explore and run the prototype directly in the digital.auto playground — no hardware needed:
 
- **[Open Prototype on digital.auto Playground](https://playground.digital.auto)**
+ **[Open Prototype on digital.auto Playground](https://playground.digital.auto/model/67f76c0d8c609a0027662a69/library/prototype/69ce30f438bb8e98f0af5ac8/view)**
 
 The playground lets you simulate vehicle signals and see the app's logic in action before touching any real device. OEMs can use this to validate business logic, test signal flows, and iterate on the customer journey end-to-end.
 
@@ -98,6 +98,19 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 ### Automated Setup
 
 1. A helper script is available to create VMs [here](qemu-image-creator/README.md)
+	```bash
+		# go to the project directory
+		cd eclipse-sdv-blueprint
+		
+		# create python virtual environment
+		python3 -m venv .venv
+		source .venv/bin/activate
+		pip install -r qemu-image-creator/requirements.txt
+		
+		# execute the setup step
+		# hint: you will be prompted for sudo access to install missing packages
+		python qemu-image-creator/setup.py
+	```
 1. When the automated setup script is ran:
 	- HPC-VM is launched by default
 	- digital.auto runtime is automatically launched. 
@@ -106,6 +119,8 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 
 
 ### Manual Setup
+
+Follow the manual steps only if the above script fails.
 
 **Prerequisites**
 
@@ -128,6 +143,14 @@ docker run -d \
 ```
 
 > `RUNTIME_NAME` is the identifier you'll use to register this runtime on the playground.
+
+### Hardware simulator
+
+```bash
+	./hardware-sim/setup.sh
+	pip install -r hardware-sim/requirements.txt
+	python hardware-sim/pytk_dashboard.py
+```
 
 ### Application Execution
 

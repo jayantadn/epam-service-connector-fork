@@ -820,7 +820,7 @@ class Dashboard:
         )
         self._sim_btn.grid(row=0, column=0, padx=(0, 12), pady=2)
         self._sim_status_var = StringVar(
-            value="Idle \u2014 press Start to begin battery drain"
+            value="Idle \u2014 press Start to drive the car"
         )
         ttk.Label(sim_inner, textvariable=self._sim_status_var, anchor="w").grid(
             row=0, column=1, sticky="we", padx=4
