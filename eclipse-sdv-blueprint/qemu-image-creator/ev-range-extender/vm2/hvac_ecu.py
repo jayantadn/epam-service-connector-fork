@@ -194,7 +194,11 @@ class _LatestValueQueue:
                 self._evt.clear()
 
 
-async def _consumer(queue: "_LatestValueQueue", kuksa: VSSClient) -> None:
+async def _consumer(
+    queue: "_LatestValueQueue",
+    kuksa: VSSClient,
+    dash_pub: "zenoh.Publisher",
+) -> None:
     """Drain the latest-value queue and push to Kuksa with dedup.
 
     One Kuksa RPC per asyncio loop tick that has pending data. Identical
@@ -205,6 +209,7 @@ async def _consumer(queue: "_LatestValueQueue", kuksa: VSSClient) -> None:
     while True:
         pending = await queue.take()
         updates: dict[str, Datapoint] = {}
+        ack_values: list[float] = []
         log_lines: list[str] = []
         for path, (raw_value, cast, src) in pending.items():
             try:
@@ -213,17 +218,31 @@ async def _consumer(queue: "_LatestValueQueue", kuksa: VSSClient) -> None:
                 log(f"WARN cannot cast {raw_value!r} -> {cast.__name__} for {path}: {exc}")
                 continue
             if last_sent.get(path) == coerced:
+                ack_values.append(float(coerced))
                 continue
             updates[path] = Datapoint(coerced)
             last_sent[path] = coerced
+            ack_values.append(float(coerced))
             log_lines.append(f"OK   {path} = {coerced} (from {src})")
-        if not updates:
-            continue
-        try:
-            await kuksa.set_current_values(updates)
-        except Exception as exc:
-            log(f"ERROR writing {len(updates)} key(s) to Kuksa: {exc}")
-            continue
+        if updates:
+            try:
+                await kuksa.set_current_values(updates)
+            except Exception as exc:
+                log(f"ERROR writing {len(updates)} key(s) to Kuksa: {exc}")
+                continue
+
+        for v in ack_values:
+            try:
+                dash_pub.put(json.dumps({
+                    "key": DASH_KEY_PAIR,
+                    "value": v,
+                    "status": _hvac_status(v),
+                    "source": SOURCE_LABEL,
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                }).encode("utf-8"))
+            except Exception as exc:
+                log(f"WARN dashboard ACK publish failed: {exc}")
+
         for line in log_lines:
             log(line)
 
@@ -282,7 +301,6 @@ async def run(listen: str, kuksa_host: str, kuksa_port: int) -> None:
 
         loop = asyncio.get_running_loop()
         queue = _LatestValueQueue(loop)
-        consumer_task = asyncio.create_task(_consumer(queue, kuksa))
         log(f"Opening Zenoh session, listen={listen}, subscribed to '{KEY_PREFIX}'")
         with zenoh.open(build_zenoh_config(listen)) as session:
             stop_event = asyncio.Event()
@@ -314,6 +332,9 @@ async def run(listen: str, kuksa_host: str, kuksa_port: int) -> None:
             # (host -> ECU) is reused for ECU -> host samples too.
             dash_pub = session.declare_publisher(DASH_STATUS_KEY)
             log(f"Reverse channel publisher on '{DASH_STATUS_KEY}' ready.")
+
+            consumer_task = asyncio.create_task(_consumer(queue, kuksa, dash_pub))
+
             forwarder_task = asyncio.create_task(
                 _dashboard_forwarder(kuksa, dash_pub)
             )

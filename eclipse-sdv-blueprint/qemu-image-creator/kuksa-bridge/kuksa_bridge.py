@@ -191,6 +191,7 @@ class BridgeConfig:
     zenoh_connect: tuple[str, ...]
     key_prefix: str            # Zenoh key prefix; we publish on f"{prefix}/<vss/path>"
     source_label: str          # embedded in outbound payloads ("vm1" / "vm2" / hostname)
+    suppress_initial_outbound: bool
     signals: tuple[SignalSpec, ...]
 
     @property
@@ -261,6 +262,7 @@ def load_config(path: Path) -> BridgeConfig:
         zenoh_connect=tuple(zenoh_cfg.get("connect") or ()),
         key_prefix=raw.get("key_prefix", "ev-range/cabin"),
         source_label=raw.get("source_label", socket.gethostname()),
+        suppress_initial_outbound=bool(raw.get("suppress_initial_outbound", False)),
         signals=tuple(signals),
     )
 
@@ -433,7 +435,21 @@ async def _outbound_loop(
     )
     last_fwd: dict[str, Any] = {}
     paths = list(outbound_specs.keys())
+    skipped_initial_snapshot = False
     async for updates in kuksa.subscribe_current_values(paths):
+        if cfg.suppress_initial_outbound and not skipped_initial_snapshot:
+            skipped_initial_snapshot = True
+            suppressed = [
+                path for path, dp in updates.items()
+                if dp is not None and dp.value is not None and path in outbound_specs
+            ]
+            if suppressed:
+                log(
+                    "Outbound: suppressed initial local snapshot for "
+                    f"{len(suppressed)} path(s): {', '.join(suppressed)}"
+                )
+            continue
+
         forwarded: list[tuple[str, Any, int]] = []
         for path, dp in updates.items():
             if dp is None or dp.value is None:
@@ -569,6 +585,7 @@ def _print_validation_summary(cfg: BridgeConfig) -> None:
           f"connect={list(cfg.zenoh_connect)}")
     print(f"KeyPrefix : {cfg.key_prefix}")
     print(f"Source    : {cfg.source_label}")
+    print(f"SuppressInitialOutbound : {cfg.suppress_initial_outbound}")
     print(f"Signals   : {len(cfg.signals)} total "
           f"({sum(s.is_outbound for s in cfg.signals)} outbound, "
           f"{sum(s.is_inbound for s in cfg.signals)} inbound)")

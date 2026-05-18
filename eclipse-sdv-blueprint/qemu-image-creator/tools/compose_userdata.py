@@ -17,7 +17,7 @@ the template already does, also:
          VM1                              VM2
          ev-range-bms.service             ev-range-hvac.service
          ev-range-range-ai.service        ev-range-seat.service
-         ev-range-zenoh-client.service    ev-range-zenoh-publisher.service
+      ev-range-kuksa-bridge.service    ev-range-kuksa-bridge.service
 
   3. Adds `runcmd` entries to chown the source tree to ubuntu:ubuntu,
      reload systemd, and enable+start every unit in VM_UNITS for the
@@ -63,17 +63,12 @@ VM_FILES = {
     "vm1": {
         "ev-range-extender/vm1/range_ai.py":     "/home/ubuntu/ev-range-extender/vm1/range_ai.py",
         "ev-range-extender/vm1/bms.py":          "/home/ubuntu/ev-range-extender/vm1/bms.py",
-        "ev-range-extender/vm1/zenoh_client.py": "/home/ubuntu/ev-range-extender/vm1/zenoh_client.py",
-        # Phase A: the new project-local "kuksa-bridge" runs side-by-side with
-        # the legacy zenoh_publisher.py / zenoh_client.py pair (different
-        # Zenoh port, same wire envelope). See qemu-image-creator/kuksa-bridge/README.md.
         "kuksa-bridge/kuksa_bridge.py":          "/home/ubuntu/kuksa-bridge/kuksa_bridge.py",
         "kuksa-bridge/bridge-config-vm1.json":   "/home/ubuntu/kuksa-bridge/bridge-config.json",
     },
     "vm2": {
         "ev-range-extender/vm2/hvac_ecu.py":         "/home/ubuntu/ev-range-extender/vm2/hvac_ecu.py",
         "ev-range-extender/vm2/seat_ecu.py":         "/home/ubuntu/ev-range-extender/vm2/seat_ecu.py",
-        "ev-range-extender/vm2/zenoh_publisher.py":  "/home/ubuntu/ev-range-extender/vm2/zenoh_publisher.py",
         "kuksa-bridge/kuksa_bridge.py":              "/home/ubuntu/kuksa-bridge/kuksa_bridge.py",
         "kuksa-bridge/bridge-config-vm2.json":       "/home/ubuntu/kuksa-bridge/bridge-config.json",
     },
@@ -191,17 +186,6 @@ VM_UNITS = {
             after_kuksa_helper="evrange-start-runtime",
             log_path="/tmp/ev-range-range-ai.log",
         ),
-        # Legacy Zenoh -> Kuksa bridge (VM1 side): receives cabin signals
-        # published by zenoh_publisher.service on VM2 and writes them
-        # into VM1's Kuksa so range_ai.py can use them. Kept active
-        # alongside the new kuksa-bridge for the Phase A cutover - they
-        # use different Zenoh ports (7447 vs 7448) so they cannot collide.
-        "ev-range-zenoh-client.service": _systemd_unit(
-            description="EV Range Extender - VM2->VM1 Zenoh bridge (subscriber, legacy)",
-            exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm1/zenoh_client.py",
-            after_kuksa_helper="evrange-start-runtime",
-            log_path="/tmp/ev-range-zenoh-client.log",
-        ),
         # New project-local kuksa-bridge (VM1 sink role). See
         # qemu-image-creator/kuksa-bridge/README.md for the rationale.
         "ev-range-kuksa-bridge.service": _kuksa_bridge_unit(
@@ -224,16 +208,6 @@ VM_UNITS = {
             exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm2/seat_ecu.py",
             after_kuksa_helper="evrange-start-databroker",
             log_path="/tmp/ev-range-seat.log",
-        ),
-        # Legacy Kuksa -> Zenoh bridge (VM2 side): forwards VM2's cabin
-        # Kuksa signals over Zenoh so zenoh_client.service on VM1 can
-        # ingest them into VM1's Kuksa for the range model. Kept active
-        # alongside the new kuksa-bridge during the Phase A cutover.
-        "ev-range-zenoh-publisher.service": _systemd_unit(
-            description="EV Range Extender - VM2->VM1 Zenoh bridge (publisher, legacy)",
-            exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm2/zenoh_publisher.py",
-            after_kuksa_helper="evrange-start-databroker",
-            log_path="/tmp/ev-range-zenoh-publisher.log",
         ),
         # New project-local kuksa-bridge (VM2 source role).
         "ev-range-kuksa-bridge.service": _kuksa_bridge_unit(

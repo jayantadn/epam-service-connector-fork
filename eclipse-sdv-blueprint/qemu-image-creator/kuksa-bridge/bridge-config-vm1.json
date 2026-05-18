@@ -28,6 +28,7 @@
   },
   "key_prefix": "kuksa-bridge",
   "source_label": "vm1",
+  "suppress_initial_outbound": true,
   "signals": [
     {
       "_role": "VM1 <-> VM2: cabin (bidirectional - EV-app writes flow VM1 -> VM2)",
