@@ -939,14 +939,16 @@ class Dashboard:
             )
 
     def _drain_tick(self) -> None:
-        """One simulation tick: drain SoC by _SOC_DRAIN_PER_TICK and
-        adjust Voltage proportionally.  Reschedules itself via
-        root.after so it always runs on the Tk event loop."""
+        """One simulation tick: drain SoC by _SOC_DRAIN_PER_TICK.
+
+        Voltage is intentionally left untouched during the auto-drain
+        loop so the user can keep battery voltage fixed or adjust it
+        manually as desired.
+        """
         if not self._drain_running:
             return
 
         soc_row = self._rows_by_key.get("sim/battery/soc")
-        volt_row = self._rows_by_key.get("sim/battery/voltage")
 
         if soc_row is None:
             # Signal catalogue changed; give up gracefully.
@@ -957,11 +959,6 @@ class Dashboard:
             max(0.0, soc_row._float - self._SOC_DRAIN_PER_TICK), 2
         )
         soc_row.set_value_and_publish(new_soc)
-
-        # Voltage tracks SoC linearly: 320 V at 0 %, 420 V at 100 %
-        if volt_row is not None:
-            new_voltage = round(320.0 + (new_soc / 100.0) * 100.0, 1)
-            volt_row.set_value_and_publish(new_voltage)
 
         ts = datetime.now().strftime("%H:%M:%S")
         self._sim_status_var.set(
