@@ -26,12 +26,12 @@ The journey below shows how the system interacts across three steps — from the
 
 | Signal | Layer | Purpose |
 |---|---|---|
-| `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` | End | Triggers power-saving mode when charge is low |
-| `Vehicle.Powertrain.TractionBattery.CurrentVoltage` | End | Battery voltage monitored by the Battery Monitoring System |
-| `Vehicle.Powertrain.TractionBattery.CurrentCurrent` | End | Battery current monitored by the Battery Monitoring System |
-| `Vehicle.Cabin.HVAC.AmbientAirTemperature` | End | Adjusted to save power |
-| `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` | End | Disabled to save power |
-| `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` | End | Disabled to save power |
+| `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` | VM1 / BMS | Triggers power-saving mode when charge is low |
+| `Vehicle.Powertrain.TractionBattery.CurrentVoltage` | VM1 / BMS | Battery voltage monitored by the Battery Monitoring System |
+| `Vehicle.Powertrain.TractionBattery.CurrentCurrent` | VM1 / BMS | Battery current monitored by the Battery Monitoring System |
+| `Vehicle.Cabin.HVAC.AmbientAirTemperature` | VM2 / HVAC ECU | Adjusted to save power and bridged to VM1 |
+| `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` | VM2 / Seat ECU | Disabled to save power and bridged to VM1 |
+| `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` | VM2 / Seat ECU | Disabled to save power and bridged to VM1 |
 
 ---
 
@@ -64,17 +64,19 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 ### How the flow works
 
 ```
-1. EV Range Extender Prototype 
+1. EV Range Extender Prototype
         ↓
 2. App is published to the AosCloud App Registry
         ↓
-3. AosCloud fetches the app and pushes it to the HPC-VM (App Fetching)
+3. AosCloud fetches the app and pushes it to VM1 / HPC-VM (App Fetching)
         ↓
-4. AosCore on the HPC-VM executes the app via the digital.auto runtime
+4. AosCore on VM1 executes the app via the digital.auto runtime
         ↓
-5. The app reads/writes vehicle signals via eclipse-kuksa
+5. Host PyTk dashboard publishes simulated hardware signals to VM1 and VM2 ECUs
         ↓
-6. Signals flow between HPC-VM and End-VM over eclipse-zenoh
+6. VM1 Kuksa is the single signal runtime; VM2 runs HVAC/Seat ECUs and a stateless Zenoh relay
+	↓
+7. Cabin signals flow between VM1 and VM2 over eclipse-zenoh via kuksa-bridge
 ```
 
 ### What's running in each layer
@@ -82,18 +84,19 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 | Layer | What It Is | What It Does |
 |---|---|---|
 |  **AosCloud** | Fleet Management + App Registry | Stores, versions and distributes vehicle apps to the fleet |
-|  **HPC-VM** (Linux) | AosCore + digital.auto + Eclipse AutoWorx stack | The brain — runs the vehicle app, handles signal logic |
-|  **End-VM** (Linux) | Seat Control Module, HVAC ECU, Range Compute AI, Battery Monitoring System | Simulates the end-ECU layer that controls physical components |
-|  **Communication stack** | Eclipse Zenoh | Connects HPC-VM and End-VM — lightweight pub/sub messaging |
+|  **Host** | PyTk Hardware Simulator | Publishes battery, HVAC and seat signals to the VM ECUs over Eclipse Zenoh |
+|  **VM1 / HPC-VM** (Linux) | AosCore + digital.auto runtime + Eclipse Kuksa + Battery Monitoring System + Range Compute AI | The signal runtime and application host — runs the vehicle app, stores canonical VSS state and computes range |
+|  **VM2 / End-VM** (Linux) | HVAC ECU, Seat Control Module, stateless kuksa-bridge relay | Simulates cabin end-ECUs without creating an additional digital.auto runtime or Kuksa Databroker |
+|  **Communication stack** | Eclipse Zenoh + kuksa-bridge | Connects VM1 and VM2; VM2 relays cabin traffic while VM1 owns the single Kuksa signal runtime |
 
 ### Eclipse components inside the blueprint phase 1
 
 | Component | Role |
 |---|---|
 | `eclipse-autoworx` | Automates app lifecycle management on the vehicle |
-| `eclipse-kuksa` | Vehicle signal broker — reads and writes VSS signals |
+| `eclipse-kuksa` | Vehicle signal broker on VM1 — reads and writes VSS signals |
 | `eclipse-velocitas` | Framework for building vehicle apps in Python/C++ |
-| `eclipse-zenoh` | Modern pub/sub communication protocol between HPC-VM and End-VM |
+| `eclipse-zenoh` | Modern pub/sub communication protocol between the host dashboard, VM1 and VM2 |
 
 ### Automated Setup
 
@@ -112,9 +115,10 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 		python qemu-image-creator/setup.py
 	```
 1. When the automated setup script is ran:
-	- HPC-VM is launched by default
-	- digital.auto runtime is automatically launched. 
-1. Launch the End-VM using the script vm2_launch.sh
+	- VM1 / HPC-VM and VM2 / End-VM are launched
+	- digital.auto runtime and Kuksa Databroker are automatically launched on VM1
+	- VM2 starts only the HVAC ECU, Seat Control Module and stateless Zenoh relay
+1. To restart a VM manually, use `qemu-image-creator/vm1_launch.sh` or `qemu-image-creator/vm2_launch.sh`
 
 
 
@@ -125,12 +129,12 @@ Follow the manual steps only if the above script fails.
 **Prerequisites**
 
 - Two VMs setup with communication with each other.
-- Docker installed inside a QEMU VM
+- Docker installed inside VM1 / HPC-VM
 - Access to [playground.digital.auto](https://playground.digital.auto)
 
 **Run the SDV Runtime**
 
-1. Pull the runtime image inside HPC-VM
+1. Pull the runtime image inside VM1 / HPC-VM
 ```bash
 docker pull ghcr.io/eclipse-autowrx/sdv-runtime:latest
 ```
@@ -143,14 +147,14 @@ docker run -d \
 ```
 
 > `RUNTIME_NAME` is the identifier you'll use to register this runtime on the playground.
+> VM2 does not run an additional digital.auto runtime; it only runs the cabin ECUs and the stateless Zenoh relay.
 
 ### Hardware simulator
 
 ```bash
-	# Start PyTk-based hardware simulator
-	# See full steps in hardware-sim/README.md
-	cd hardware-sim
-	python3 pytk_dashboard.py
+	./hardware-sim/setup.sh
+	pip install -r hardware-sim/requirements.txt
+	python hardware-sim/pytk_dashboard.py
 ```
 
 ### Application Execution

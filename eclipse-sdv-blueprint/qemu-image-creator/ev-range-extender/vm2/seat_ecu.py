@@ -379,15 +379,15 @@ async def _run_without_kuksa(listen: str, bridge_connect: str) -> None:
                 coerced = int(round(float(value)))
             except (TypeError, ValueError):
                 return
-            if last_inbound.get(path) == coerced:
-                return
+            changed = last_inbound.get(path) != coerced
             last_inbound[path] = coerced
             try:
                 dash_pub.put(_dash_payload(path, coerced, SOURCE_LABEL))
             except Exception as exc:
                 log(f"ERROR forwarding bridge value for {path} to dashboard: {exc}")
                 return
-            log(f"ACT  {path} = {coerced}  -> dashboard {VSS_TO_DASH_KEY[path]} (status={_seat_status(path, coerced)})")
+            tag = "ACT " if changed else "act "
+            log(f"{tag} {path} = {coerced}  -> dashboard {VSS_TO_DASH_KEY[path]} (status={_seat_status(path, coerced)})")
 
         dashboard_sub = session.declare_subscriber(KEY_PREFIX, dashboard_listener)
         bridge_sub = session.declare_subscriber(f"{BRIDGE_KEY_PREFIX}/**", bridge_listener)

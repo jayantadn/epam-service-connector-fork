@@ -121,7 +121,8 @@ class BridgeConfig:
     key_prefix: str            # Zenoh key prefix; we publish on f"{prefix}/<vss/path>"
     source_label: str          # embedded in outbound payloads ("vm1" / "vm2" / hostname)
     suppress_initial_outbound: bool
-    relay_only: bool           # if True, no Kuksa connection; just forward Zenoh messages
+    relay_only: bool           # if True, no Kuksa connection; keep a Zenoh peer session open
+    diagnostic_log: bool       # if True, observe and log bridge samples without republishing
     signals: tuple[SignalSpec, ...]
 
     @property
@@ -194,6 +195,7 @@ def load_config(path: Path) -> BridgeConfig:
         source_label=raw.get("source_label", socket.gethostname()),
         suppress_initial_outbound=bool(raw.get("suppress_initial_outbound", False)),
         relay_only=bool(raw.get("relay_only", False)),
+        diagnostic_log=bool(raw.get("diagnostic_log", False)),
         signals=tuple(signals),
     )
 
@@ -550,13 +552,37 @@ async def _relay_only(cfg: BridgeConfig) -> int:
     with zenoh.open(build_zenoh_config(cfg)) as session:
         log("Zenoh session open (relay-only mode).")
 
-        log("Relay-only: no app-level subscribers or publishers declared; Zenoh routes peer traffic.")
+        subscriber = None
+        if cfg.diagnostic_log:
+            allowed_paths = {spec.path for spec in cfg.signals}
+
+            def diagnostic_listener(sample: zenoh.Sample) -> None:
+                try:
+                    msg = json.loads(sample.payload.to_string())
+                except Exception as exc:
+                    log(f"RX? bad payload on {sample.key_expr}: {exc}")
+                    return
+                path = msg.get("path")
+                if path not in allowed_paths:
+                    return
+                source = msg.get("source", "?")
+                value = msg.get("value", "?")
+                log(f"RX   {path} = {value} (from {source}) on {sample.key_expr}")
+
+            subscriber = session.declare_subscriber(f"{cfg.key_prefix}/**", diagnostic_listener)
+            log(f"Diagnostic RX logging enabled on '{cfg.key_prefix}/**' (observe-only).")
+
+        if cfg.diagnostic_log:
+            log("Relay-only: diagnostic subscriber logs samples; Zenoh still routes peer traffic.")
+        else:
+            log("Relay-only: no app-level subscribers or publishers declared; Zenoh routes peer traffic.")
         log("Relay running. Ctrl+C to stop.")
         try:
             await asyncio.sleep(float('inf'))
         except KeyboardInterrupt:
             pass
         finally:
+            _ = subscriber
             _ = session
     return 0
 

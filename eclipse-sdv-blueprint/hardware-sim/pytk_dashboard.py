@@ -505,7 +505,7 @@ class IndicatorPanel:
         hc = self._seat_values.get("seat.heating_cooling", 0)
 
         heat_on = (heating != 0) or (hc > 0)
-        cool_on = (hc != 0)
+        cool_on = (hc < 0)
 
         self._render(
             "seat_heat",
@@ -688,6 +688,10 @@ class Dashboard:
             if row is not None and time.monotonic() > self._reverse_inhibit.get("sim/cabin/seat/heating", 0.0):
                 logger.info(f"SEAT_REVERSE: updating dashboard heating toggle to {v_int != 0}")
                 self.root.after_idle(lambda r=row, on=(v_int != 0): r.set_toggle_silent(on))
+            if v_int != 0:
+                cooling_row = self._rows_by_key.get("sim/cabin/seat/hc")
+                if cooling_row is not None:
+                    self.root.after_idle(lambda r=cooling_row: r.set_toggle_silent(False))
 
         if sig_key == "seat.heating_cooling":
             logger.info(f"SEAT_REVERSE: heating_cooling key, value={v_int}")
@@ -695,6 +699,10 @@ class Dashboard:
             row = self._rows_by_key.get("sim/cabin/seat/hc")
             if row is not None and time.monotonic() > self._reverse_inhibit.get("sim/cabin/seat/hc", 0.0):
                 self.root.after_idle(lambda r=row, on=(v_int != 0): r.set_toggle_silent(on))
+            if v_int < 0:
+                heating_row = self._rows_by_key.get("sim/cabin/seat/heating")
+                if heating_row is not None:
+                    self.root.after_idle(lambda r=heating_row: r.set_toggle_silent(False))
 
     def _publish(self, sig: Signal, value: float | int) -> None:
         if sig.is_toggle and sig.mutex_with and value == sig.on_value:
