@@ -78,7 +78,7 @@ BATTERY_SIGNALS = (
 )
 
 HVAC_SIGNALS = (
-    Signal("Fan Speed", "sim/cabin/temp", "%", 0, 100, 1, 30, is_int=True),
+    Signal("Fan Speed", "sim/cabin/temp", "%", 0, 100, 1, 0, is_int=True),
 )
 
 SEAT_SIGNALS = (
@@ -103,7 +103,7 @@ SEAT_SIGNALS = (
         -100,
         0,
         1,
-        -100,
+        0,
         is_int=True,
         is_toggle=True,
         on_value=-100,
@@ -488,7 +488,14 @@ class IndicatorPanel:
             self._last_text[lane] = text
 
     def _apply_hvac(self, msg: dict) -> None:
-        status = str(msg.get("status", "off")).lower()
+        value = msg.get("value")
+        if value is not None:
+            try:
+                status = "on" if float(value) > 0 else "off"
+            except (TypeError, ValueError):
+                status = str(msg.get("status", "off")).lower()
+        else:
+            status = str(msg.get("status", "off")).lower()
         color = "green" if status == "on" else "red"
         text = f"Fan {status.upper()}  src={msg.get('source', '?')}"
         self._render("hvac", self._hvac_canvas, self._hvac_circle, self._hvac_text, color, text)
@@ -642,7 +649,6 @@ class Dashboard:
     def _on_hvac_reverse(self, key: str, msg: dict) -> None:
         logger.info(f"HVAC_REVERSE: received {msg}")
         self.indicators.on_hvac_sample(key, msg)
-        self._startup_vm2_pending.discard("sim/cabin/temp")
         value = msg.get("value")
         if value is None:
             logger.warning(f"HVAC_REVERSE: no value in message")
@@ -658,6 +664,9 @@ class Dashboard:
         except Exception as e:
             logger.warning(f"HVAC_REVERSE: failed to parse value {value}: {e}")
             return
+
+        if int(round(v)) == int(round(row._float)):
+            self._startup_vm2_pending.discard("sim/cabin/temp")
 
         if row._float == int(round(v)):
             logger.debug(f"HVAC_REVERSE: value unchanged ({v})")
@@ -683,23 +692,30 @@ class Dashboard:
 
         if sig_key == "seat.heating":
             logger.info(f"SEAT_REVERSE: heating key, value={v_int}")
-            self._startup_vm2_pending.discard("sim/cabin/seat/heating")
             row = self._rows_by_key.get("sim/cabin/seat/heating")
-            if row is not None and time.monotonic() > self._reverse_inhibit.get("sim/cabin/seat/heating", 0.0):
-                logger.info(f"SEAT_REVERSE: updating dashboard heating toggle to {v_int != 0}")
-                self.root.after_idle(lambda r=row, on=(v_int != 0): r.set_toggle_silent(on))
-            if v_int != 0:
+            heat_on = v_int > 0
+            if row is not None:
+                if row.is_on() == heat_on:
+                    self._startup_vm2_pending.discard("sim/cabin/seat/heating")
+                if time.monotonic() > self._reverse_inhibit.get("sim/cabin/seat/heating", 0.0):
+                    logger.info(f"SEAT_REVERSE: updating dashboard heating toggle to {heat_on}")
+                    self.root.after_idle(lambda r=row, on=heat_on: r.set_toggle_silent(on))
+            if heat_on:
                 cooling_row = self._rows_by_key.get("sim/cabin/seat/hc")
                 if cooling_row is not None:
                     self.root.after_idle(lambda r=cooling_row: r.set_toggle_silent(False))
 
         if sig_key == "seat.heating_cooling":
             logger.info(f"SEAT_REVERSE: heating_cooling key, value={v_int}")
-            self._startup_vm2_pending.discard("sim/cabin/seat/hc")
             row = self._rows_by_key.get("sim/cabin/seat/hc")
-            if row is not None and time.monotonic() > self._reverse_inhibit.get("sim/cabin/seat/hc", 0.0):
-                self.root.after_idle(lambda r=row, on=(v_int != 0): r.set_toggle_silent(on))
-            if v_int < 0:
+            cool_on = v_int < 0
+            if row is not None:
+                if row.is_on() == cool_on:
+                    self._startup_vm2_pending.discard("sim/cabin/seat/hc")
+                if time.monotonic() > self._reverse_inhibit.get("sim/cabin/seat/hc", 0.0):
+                    logger.info(f"SEAT_REVERSE: updating dashboard cooling toggle to {cool_on}")
+                    self.root.after_idle(lambda r=row, on=cool_on: r.set_toggle_silent(on))
+            if cool_on:
                 heating_row = self._rows_by_key.get("sim/cabin/seat/heating")
                 if heating_row is not None:
                     self.root.after_idle(lambda r=heating_row: r.set_toggle_silent(False))
