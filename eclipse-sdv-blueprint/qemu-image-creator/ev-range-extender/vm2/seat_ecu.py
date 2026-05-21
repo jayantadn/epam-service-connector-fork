@@ -353,8 +353,7 @@ async def _run_without_kuksa(listen: str, bridge_connect: str) -> None:
             except (TypeError, ValueError) as exc:
                 log(f"WARN cannot cast {value!r} -> {cast.__name__} for {path}: {exc}")
                 return
-            if last_outbound.get(path) == coerced:
-                return
+            changed = last_outbound.get(path) != coerced
             last_outbound[path] = coerced
             try:
                 bridge_pubs[path].put(_bridge_payload(path, coerced, SOURCE_LABEL))
@@ -362,7 +361,8 @@ async def _run_without_kuksa(listen: str, bridge_connect: str) -> None:
             except Exception as exc:
                 log(f"ERROR forwarding dashboard value for {path}: {exc}")
                 return
-            log(f"OK   {path} = {coerced} (from {src})")
+            tag = "OK  " if changed else "ok  "
+            log(f"{tag} {path} = {coerced} (from {src})")
 
         def bridge_listener(sample: zenoh.Sample) -> None:
             try:

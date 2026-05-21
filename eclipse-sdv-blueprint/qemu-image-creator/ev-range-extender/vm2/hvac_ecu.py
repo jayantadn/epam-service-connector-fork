@@ -336,8 +336,7 @@ async def _run_without_kuksa(listen: str, bridge_connect: str) -> None:
             except (TypeError, ValueError) as exc:
                 log(f"WARN cannot cast {value!r} -> float for {HVAC_VSS_PATH}: {exc}")
                 return
-            if last_outbound.get(HVAC_VSS_PATH) == coerced:
-                return
+            changed = last_outbound.get(HVAC_VSS_PATH) != coerced
             last_outbound[HVAC_VSS_PATH] = coerced
             try:
                 bridge_pub.put(_bridge_payload(coerced, SOURCE_LABEL))
@@ -345,7 +344,8 @@ async def _run_without_kuksa(listen: str, bridge_connect: str) -> None:
             except Exception as exc:
                 log(f"ERROR forwarding dashboard value {coerced} over bridge: {exc}")
                 return
-            log(f"OK   {HVAC_VSS_PATH} = {coerced} (from {src})")
+            tag = "OK  " if changed else "ok  "
+            log(f"{tag} {HVAC_VSS_PATH} = {coerced} (from {src})")
 
         def bridge_listener(sample: zenoh.Sample) -> None:
             try:
@@ -362,15 +362,15 @@ async def _run_without_kuksa(listen: str, bridge_connect: str) -> None:
                 coerced = float(value)
             except (TypeError, ValueError):
                 return
-            if last_inbound.get(path) == coerced:
-                return
+            changed = last_inbound.get(path) != coerced
             last_inbound[path] = coerced
             try:
                 dash_pub.put(_dash_payload(coerced, SOURCE_LABEL))
             except Exception as exc:
                 log(f"ERROR forwarding bridge value {coerced} to dashboard: {exc}")
                 return
-            log(f"ACT  {path} = {coerced}  -> dashboard {DASH_KEY_PAIR} (status={_hvac_status(coerced)})")
+            tag = "ACT " if changed else "act "
+            log(f"{tag} {path} = {coerced}  -> dashboard {DASH_KEY_PAIR} (status={_hvac_status(coerced)})")
 
         dashboard_sub = session.declare_subscriber(KEY_PREFIX, dashboard_listener)
         bridge_sub = session.declare_subscriber(f"{BRIDGE_KEY_PREFIX}/**", bridge_listener)

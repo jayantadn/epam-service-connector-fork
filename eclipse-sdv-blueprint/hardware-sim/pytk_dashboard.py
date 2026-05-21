@@ -78,7 +78,7 @@ BATTERY_SIGNALS = (
 )
 
 HVAC_SIGNALS = (
-    Signal("Fan Speed", "sim/cabin/temp", "%", 0, 100, 1, 0, is_int=True),
+    Signal("Fan Speed", "sim/cabin/temp", "%", 0, 100, 1, 30, is_int=True),
 )
 
 SEAT_SIGNALS = (
@@ -89,7 +89,7 @@ SEAT_SIGNALS = (
         0,
         100,
         1,
-        0,
+        100,
         is_int=True,
         is_toggle=True,
         on_value=100,
@@ -534,6 +534,7 @@ class IndicatorPanel:
 
 class Dashboard:
     _REVERSE_INHIBIT_SECS = 1.2
+    _STARTUP_INITIAL_PUBLISH_DELAY_MS = 1000
     _STARTUP_SYNC_INTERVAL_MS = 1000
     _STARTUP_SYNC_MAX_RETRIES = 20
 
@@ -601,7 +602,7 @@ class Dashboard:
             ts = datetime.now().strftime("%H:%M:%S")
             self.status_var.set(f"[{ts}] WARN reverse subscribe failed: {exc}")
 
-        self.root.after(100, self._publish_startup_defaults)
+        self.root.after(self._STARTUP_INITIAL_PUBLISH_DELAY_MS, self._publish_startup_defaults)
         self._startup_sync_after_id = self.root.after(
             self._STARTUP_SYNC_INTERVAL_MS,
             self._startup_sync_tick,
@@ -617,7 +618,7 @@ class Dashboard:
         for row in self._rows_by_key.values():
             sig = row.sig
             value = sig.on_value if sig.is_toggle and row.is_on() else row._float
-            self._publish(sig, value)
+            self._publish(sig, value, inhibit_reverse=False)
 
     def _publish_row_default(self, key: str) -> None:
         row = self._rows_by_key.get(key)
@@ -625,7 +626,7 @@ class Dashboard:
             return
         sig = row.sig
         value = sig.on_value if sig.is_toggle and row.is_on() else row._float
-        self._publish(sig, value)
+        self._publish(sig, value, inhibit_reverse=False)
 
     def _startup_sync_tick(self) -> None:
         self._startup_sync_after_id = None
@@ -720,20 +721,22 @@ class Dashboard:
                 if heating_row is not None:
                     self.root.after_idle(lambda r=heating_row: r.set_toggle_silent(False))
 
-    def _publish(self, sig: Signal, value: float | int) -> None:
+    def _publish(self, sig: Signal, value: float | int, inhibit_reverse: bool = True) -> None:
         if sig.is_toggle and sig.mutex_with and value == sig.on_value:
             partner = self._rows_by_key.get(sig.mutex_with)
             if partner is not None and partner.is_on():
                 partner.set_toggle_silent(False)
                 try:
                     self.bus.put(partner.sig.key, partner.sig.off_value)
-                    self._reverse_inhibit[partner.sig.key] = time.monotonic() + self._REVERSE_INHIBIT_SECS
+                    if inhibit_reverse:
+                        self._reverse_inhibit[partner.sig.key] = time.monotonic() + self._REVERSE_INHIBIT_SECS
                 except Exception:
                     pass
 
         try:
             self.bus.put(sig.key, value)
-            self._reverse_inhibit[sig.key] = time.monotonic() + self._REVERSE_INHIBIT_SECS
+            if inhibit_reverse:
+                self._reverse_inhibit[sig.key] = time.monotonic() + self._REVERSE_INHIBIT_SECS
             ts = datetime.now().strftime("%H:%M:%S")
             if sig.is_toggle:
                 state = "On" if value == sig.on_value else "Off"
