@@ -4,7 +4,7 @@ hostname: vm2
 users:
   - name: ubuntu
     sudo: ALL=(ALL) NOPASSWD:ALL
-    groups: users, admin, docker
+    groups: users, admin
     home: /home/ubuntu
     shell: /bin/bash
     lock_passwd: false
@@ -28,9 +28,8 @@ packages:
   - protobuf-compiler-grpc
   - libprotobuf-dev
   - libgrpc++-dev
-  - docker.io
   - net-tools
-  - iproute2   
+  - iproute2
   - curl
   - python3
   - python3-pip
@@ -47,195 +46,23 @@ write_files:
       KbdInteractiveAuthentication yes
       PermitRootLogin no
 
-  # Robust Kuksa Databroker startup script with retries, health checks
-  # and dedicated log file. Re-runnable manually.
-  #
-  # We deliberately use the same `sdv-runtime` image as VM1 (instead of
-  # the bare `kuksa-databroker` image) so VM2 boots with the **standard
-  # COVESA VSS 4.x catalog already loaded** - no JSON download, no
-  # `--metadata` flag, no manual setup. Only the RUNTIME_NAME is changed
-  # (to `ev-range-cabin`) so the digital.auto cloud sync can tell the
-  # two VMs apart.
-  - path: /usr/local/bin/evrange-start-databroker
-    permissions: '0755'
-    owner: root:root
-    content: |
-      #!/usr/bin/env bash
-      # EV Range Extender Kuksa Databroker startup helper for VM2 (linux-baremetal).
-      # Runs the same digital.auto SDV Runtime image as VM1 so the
-      # standard COVESA VSS catalog is preloaded.
-      set -uo pipefail
-
-      LOG_FILE="/tmp/evrange-databroker.log"
-      CONTAINER="kuksa-databroker"
-      IMAGE="ghcr.io/eclipse-autowrx/sdv-runtime:latest"
-      RUNTIME_NAME="${RUNTIME_NAME:-ev-range-cabin}"
-      DATABROKER_PORT="${DATABROKER_PORT:-55555}"
-      MAX_PULL_ATTEMPTS="${MAX_PULL_ATTEMPTS:-5}"
-      PULL_BACKOFF_SECS="${PULL_BACKOFF_SECS:-10}"
-      MAX_HEALTH_ATTEMPTS="${MAX_HEALTH_ATTEMPTS:-30}"   # 30 * 2s = 60s
-      DOCKER_WAIT_ATTEMPTS="${DOCKER_WAIT_ATTEMPTS:-30}" # 30 * 2s = 60s
-
-      log() {
-          local ts
-          ts=$(date '+%Y-%m-%d %H:%M:%S.%3N')
-          echo "[$ts] [databroker] $*" | tee -a "$LOG_FILE"
-      }
-
-      ensure_docker() {
-          if ! command -v docker >/dev/null 2>&1; then
-              log "ERROR: docker is not installed"
-              exit 1
-          fi
-          log "Waiting for docker daemon to be active..."
-          for i in $(seq 1 "$DOCKER_WAIT_ATTEMPTS"); do
-              if systemctl is-active --quiet docker && docker info >/dev/null 2>&1; then
-                  log "Docker daemon is up"
-                  return 0
-              fi
-              sleep 2
-          done
-          log "ERROR: docker daemon did not become active in time"
-          systemctl status docker --no-pager 2>&1 | tee -a "$LOG_FILE" || true
-          exit 1
-      }
-
-      check_network() {
-          log "Checking outbound network to ghcr.io..."
-          if curl -fsS --max-time 10 -o /dev/null https://ghcr.io 2>>"$LOG_FILE"; then
-              log "Network OK"
-          else
-              log "WARNING: ghcr.io not reachable yet, will still try to pull"
-          fi
-      }
-
-      cleanup_stale_container() {
-          if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
-              log "Removing existing '$CONTAINER' container (stale or previous run)..."
-              docker rm -f "$CONTAINER" >>"$LOG_FILE" 2>&1 || true
-          fi
-      }
-
-      pull_image() {
-          for attempt in $(seq 1 "$MAX_PULL_ATTEMPTS"); do
-              log "Pulling $IMAGE (attempt $attempt/$MAX_PULL_ATTEMPTS)..."
-              if docker pull "$IMAGE" >>"$LOG_FILE" 2>&1; then
-                  log "Pull successful"
-                  return 0
-              fi
-              log "Pull failed, sleeping ${PULL_BACKOFF_SECS}s before retry..."
-              sleep "$PULL_BACKOFF_SECS"
-          done
-          log "ERROR: Could not pull $IMAGE after $MAX_PULL_ATTEMPTS attempts"
-          return 1
-      }
-
-      start_container() {
-          log "Starting container '$CONTAINER' (RUNTIME_NAME=$RUNTIME_NAME, --network host)..."
-          if ! docker run -d \
-                  --name "$CONTAINER" \
-                  --restart unless-stopped \
-                  --network host \
-                  -e RUNTIME_NAME="$RUNTIME_NAME" \
-                  "$IMAGE" >>"$LOG_FILE" 2>&1; then
-              log "ERROR: docker run failed"
-              return 1
-          fi
-          log "Container started"
-          return 0
-      }
-
-      wait_for_databroker() {
-          log "Waiting for Kuksa Databroker on port $DATABROKER_PORT (max $((MAX_HEALTH_ATTEMPTS*2))s)..."
-          for i in $(seq 1 "$MAX_HEALTH_ATTEMPTS"); do
-              if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
-                  log "ERROR: Container '$CONTAINER' died unexpectedly"
-                  log "----- container status -----"
-                  docker ps -a --filter "name=$CONTAINER" 2>&1 | tee -a "$LOG_FILE"
-                  log "----- last container logs -----"
-                  docker logs --tail 80 "$CONTAINER" 2>&1 | tee -a "$LOG_FILE" || true
-                  return 1
-              fi
-              if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${DATABROKER_PORT}\$"; then
-                  log "Kuksa Databroker is listening on port $DATABROKER_PORT"
-                  return 0
-              fi
-              sleep 2
-          done
-          log "ERROR: Databroker did not become reachable on port $DATABROKER_PORT in time"
-          log "----- container status -----"
-          docker ps -a --filter "name=$CONTAINER" 2>&1 | tee -a "$LOG_FILE"
-          log "----- last container logs -----"
-          docker logs --tail 80 "$CONTAINER" 2>&1 | tee -a "$LOG_FILE" || true
-          return 1
-      }
-
-      main() {
-          : > "$LOG_FILE" 2>/dev/null || true
-          log "============================================================"
-          log "    EV Range Extender Kuksa Databroker Startup (VM2)"
-          log "============================================================"
-          log "Image          : $IMAGE"
-          log "Container name : $CONTAINER"
-          log "Runtime name   : $RUNTIME_NAME"
-          log "Databroker port: $DATABROKER_PORT"
-          log "Log file       : $LOG_FILE"
-          log "Re-run         : sudo /usr/local/bin/evrange-start-databroker"
-          log "============================================================"
-
-          ensure_docker
-          check_network
-          cleanup_stale_container
-
-          if ! pull_image; then
-              log "Pull failed permanently - giving up"
-              exit 2
-          fi
-          if ! start_container; then
-              log "Start failed - giving up"
-              exit 3
-          fi
-          if ! wait_for_databroker; then
-              log "Health check failed - container is up but databroker is not responding"
-              log "Try: sudo /usr/local/bin/evrange-start-databroker  (will recreate the container)"
-              exit 4
-          fi
-
-          log "============================================================"
-          log "SUCCESS: Kuksa Databroker is up and healthy"
-          log "  Container logs   : docker logs -f $CONTAINER"
-          log "  This startup log : tail -f $LOG_FILE"
-          log "============================================================"
-      }
-
-      main "$@"
-
 runcmd:
-  - systemctl enable docker
-  - systemctl start docker
-  - usermod -aG docker ubuntu
-
   # Make sure sshd picks up the password-auth drop-in written above.
   - systemctl restart ssh
 
   # Refresh linker cache for gRPC libs (used by C++ apps).
   - ldconfig
 
-  # Install Python packages required by the EV Range Extender VM2 components:
-  #   - kuksa-client: vm2/someip_publisher.py
-  #     (subscribes to VM2's local Kuksa Databroker)
-  #   - someipy (>=1.0,<2.0): someip-demo/ + vm2/someip_publisher.py
-  #     (active SOME/IP / Eclipse-SCore transport for the EV Range Extender demo)
-  #   - grpcio + grpcio-tools: grpc-demo (server.py + generate.sh)
+  # Install Python packages required by the EV Range Extender VM2 components.
+  # Runtime is on VM1 only. VM2 ECUs act as bridge-edge adapters and
+  # transfer all VM1<->VM2 signal data via kuksa-bridge over Zenoh.
+  # kuksa-client is pinned because the ECUs import Datapoint from
+  # kuksa_client.grpc, which is the 0.5.x API shape.
   - |
     pip3 install --break-system-packages --ignore-installed \
-      eclipse-zenoh 'someipy>=1.0,<2.0' pyyaml jsonschema grpcio grpcio-tools kuksa-client \
+      eclipse-zenoh 'someipy>=1.0,<2.0' pyyaml jsonschema grpcio grpcio-tools 'kuksa-client==0.5.1' \
       >> /tmp/evrange-pip.log 2>&1 || \
       echo "WARNING: pip install reported errors, see /tmp/evrange-pip.log" >> /tmp/evrange-pip.log
-
-  # Start the Kuksa Databroker via the helper script. Detach so cloud-init
-  # does not block on slow image pulls.
-  - /usr/local/bin/evrange-start-databroker &
 
   # Create a generic apps directory for ad-hoc deployments.
   - mkdir -p /home/ubuntu/apps

@@ -5,53 +5,30 @@
 # https://opensource.org/licenses/MIT.
 #
 # SPDX-License-Identifier: MIT
-"""Range Compute AI for the EV Range Extender (runs on VM1).
+"""Range Compute AI service — runs on VM1.
 
-Auto-deployed onto VM1 by cloud-init and started by the
-`ev-range-range-ai.service` systemd unit on boot.
+Subscribes to battery and cabin VSS signals from the local Kuksa Databroker
+(sdv-runtime, 127.0.0.1:55555), computes estimated driving range, and writes
+the result back as Vehicle.Powertrain.Range.
 
-Connects to the local Kuksa Databroker (the ev-range SDV Runtime
-container on 127.0.0.1:55555) and:
+Signal flow
+-----------
+  VM1 Kuksa Databroker
+    ├─ Vehicle.Powertrain.TractionBattery.CurrentVoltage      (written by bms.py)
+    ├─ Vehicle.Powertrain.TractionBattery.CurrentCurrent      (written by bms.py)
+    ├─ Vehicle.Powertrain.TractionBattery.StateOfCharge.Current  (written by bms.py)
+    ├─ Vehicle.Cabin.HVAC.AmbientAirTemperature               (mirrored from VM2 via kuksa-bridge)
+    ├─ Vehicle.Cabin.Seat.Row1.DriverSide.Heating             (mirrored from VM2 via kuksa-bridge)
+    └─ Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling      (mirrored from VM2 via kuksa-bridge)
+          │
+          ▼
+      range_ai.py  computes  range_km = available_kWh / effective_consumption
+          │
+          ▼
+      Vehicle.Powertrain.Range  (Uint32, km)
 
-  1. Subscribes to six VSS input signals - all driven by the host
-     PyTk dashboard:
-
-         # Local on VM1 (battery telemetry, written by bms.py)
-         Vehicle.Powertrain.TractionBattery.CurrentVoltage          (V)
-         Vehicle.Powertrain.TractionBattery.CurrentCurrent          (A)
-         Vehicle.Powertrain.TractionBattery.StateOfCharge.Current   (%)
-
-         # From VM2 via the zenoh_publisher.py -> zenoh_client.py bridge
-         Vehicle.Cabin.HVAC.AmbientAirTemperature                   (% 0..100,
-                                                                     written by hvac_ecu.py;
-                                                                     see HVAC NOTE below)
-         Vehicle.Cabin.Seat.Row1.DriverSide.Heating                 (% 0..100,
-                                                                     written by seat_ecu.py)
-         Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling          (% -100..100;
-                                                                     negative = ventilation,
-                                                                     positive = heating)
-
-  2. On every update recomputes the estimated remaining driving range:
-
-         available_kWh  = (SoC / 100) * BATTERY_CAPACITY_KWH
-         consumption    = NOMINAL_CONSUMPTION_KWH_PER_KM
-         consumption   *= load_factor   if instantaneous power > NOMINAL_CRUISE_POWER_KW
-         consumption   += cabin_load_kw / AVG_SPEED_KMH    # HVAC fan + seat heater + ventilation
-         range_km       = available_kWh / consumption
-
-  3. Publishes the result back to the same Databroker as:
-
-         Vehicle.Powertrain.Range  (km, Uint32)
-
-HVAC NOTE - signal reuse for the demo:
-    The dashboard slider is labelled "Fan Speed" and drives the value
-    0..100 (%) into `Vehicle.Cabin.HVAC.AmbientAirTemperature`. The
-    six VSS paths above are kept exactly as the original signal
-    catalogue defines them; only the *interpretation* of the
-    AmbientAirTemperature value is treated as fan-speed percent here,
-    so that turning the fan slider UP increases cabin draw and
-    therefore lowers Range. This is intentional for the demo and is
-    the only place the signal-name-vs-meaning mismatch matters.
+Note: AmbientAirTemperature (0–100 %) is reused as HVAC fan-speed for the
+demo; a higher fan value increases cabin power draw and lowers range.
 """
 
 import argparse
@@ -63,16 +40,12 @@ from kuksa_client.grpc import Datapoint
 from kuksa_client.grpc.aio import VSSClient
 
 
-# ---- VM1 battery telemetry (written by bms.py from the host PyTk
-# Battery Voltage / Current / Battery % sliders) -----------------------
+# Battery signals (written by bms.py)
 SIGNAL_CURRENT = "Vehicle.Powertrain.TractionBattery.CurrentCurrent"
 SIGNAL_VOLTAGE = "Vehicle.Powertrain.TractionBattery.CurrentVoltage"
 SIGNAL_SOC     = "Vehicle.Powertrain.TractionBattery.StateOfCharge.Current"
 
-# ---- VM2 cabin signals (bridged via zenoh_publisher.py on VM2 ->
-# zenoh_client.py on VM1) ---------------------------------------------
-# AmbientAirTemperature is reused as the "Fan Speed" channel for the
-# demo (see HVAC NOTE in the module docstring).
+# Cabin signals (mirrored from VM2 via kuksa-bridge; fan speed uses AmbientAirTemperature)
 SIGNAL_HVAC_FAN  = "Vehicle.Cabin.HVAC.AmbientAirTemperature"
 SIGNAL_SEAT_HEAT = "Vehicle.Cabin.Seat.Row1.DriverSide.Heating"
 SIGNAL_SEAT_HC   = "Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling"

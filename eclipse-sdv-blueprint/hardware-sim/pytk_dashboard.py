@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import logging.handlers
 import socket
 import sys
 import threading
@@ -25,6 +27,15 @@ from tkinter import BooleanVar, Canvas, Frame, IntVar, StringVar, Tk, ttk
 from typing import Callable, Optional
 
 import zenoh
+
+# Setup logging
+LOG_FILE = "/tmp/pytk_dashboard.log"
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+handler = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=3)
+formatter = logging.Formatter('%(asctime)s.%(msecs)03d [%(name)s] %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 
 DEFAULT_VM1_IP = "192.168.100.10"
@@ -116,6 +127,7 @@ class ZenohBus:
         self._publishers: dict[str, zenoh.Publisher] = {}
         self._subscribers: list[zenoh.Subscriber] = []
         self._lock = threading.Lock()
+        logger.debug(f"ZenohBus init with endpoints: {endpoints}")
 
     def _ensure(self) -> zenoh.Session:
         with self._lock:
@@ -141,22 +153,28 @@ class ZenohBus:
                 "ts": datetime.now(timezone.utc).isoformat(),
             }
         ).encode("utf-8")
+        logger.debug(f"PUBLISH: {key} = {value}")
         pub.put(payload)
 
     def subscribe(self, key_expr: str, callback: Callable[[str, dict], None]) -> None:
         session = self._ensure()
+        logger.info(f"Subscribing to: {key_expr}")
 
         def _listener(sample: zenoh.Sample) -> None:
             try:
                 raw = sample.payload.to_string()
                 msg = json.loads(raw)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to parse message on {sample.key_expr}: {e}")
                 return
             if not isinstance(msg, dict):
+                logger.warning(f"Message is not dict on {sample.key_expr}: {type(msg)}")
                 return
             try:
+                logger.debug(f"RECEIVED: {sample.key_expr} = {msg}")
                 callback(str(sample.key_expr), msg)
-            except Exception:
+            except Exception as e:
+                logger.error(f"Callback error on {sample.key_expr}: {e}")
                 return
 
         sub = session.declare_subscriber(key_expr, _listener)
@@ -274,6 +292,7 @@ class SignalRow:
         value = self.sig.on_value if on else self.sig.off_value
         self._float = value
         self._refresh_toggle_label()
+        logger.info(f"TOGGLE: {self.sig.key} -> {value} ({'ON' if on else 'OFF'})")
         self.publish(self.sig, value)
 
     def _on_scale_press(self, _event) -> None:
@@ -282,6 +301,9 @@ class SignalRow:
     def _on_scale_release(self, _event) -> None:
         self._user_dragging = False
         self._remote_hush_until = time.monotonic() + 0.4
+
+    def is_user_dragging(self) -> bool:
+        return self._user_dragging
 
     def _on_scale(self, raw: str) -> None:
         if self._building:
@@ -305,6 +327,7 @@ class SignalRow:
 
         self._float = value
         self._remote_hush_until = time.monotonic() + 1.0
+        logger.info(f"SCALE: {self.sig.key} -> {value}")
         self.publish(self.sig, value)
 
     def _on_spin(self) -> None:
@@ -324,6 +347,7 @@ class SignalRow:
         self._float = value
         self._remote_hush_until = time.monotonic() + 1.0
         self.scale.set(value)
+        logger.info(f"SPIN: {self.sig.key} -> {value}")
         self.publish(self.sig, value)
 
     def set_value_silent(self, value: float) -> None:
@@ -616,45 +640,57 @@ class Dashboard:
         )
 
     def _on_hvac_reverse(self, key: str, msg: dict) -> None:
+        logger.info(f"HVAC_REVERSE: received {msg}")
         self.indicators.on_hvac_sample(key, msg)
         self._startup_vm2_pending.discard("sim/cabin/temp")
         value = msg.get("value")
         if value is None:
+            logger.warning(f"HVAC_REVERSE: no value in message")
             return
 
         row = self._rows_by_key.get("sim/cabin/temp")
         if row is None or row.is_user_dragging():
+            logger.debug(f"HVAC_REVERSE: row None or user dragging, skipping update")
             return
 
         try:
             v = float(value)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"HVAC_REVERSE: failed to parse value {value}: {e}")
             return
 
         if row._float == int(round(v)):
+            logger.debug(f"HVAC_REVERSE: value unchanged ({v})")
             return
 
         if time.monotonic() <= self._reverse_inhibit.get("sim/cabin/temp", 0.0):
+            logger.debug(f"HVAC_REVERSE: inhibit active, skipping")
             return
 
+        logger.info(f"HVAC_REVERSE: updating dashboard fan speed to {v}")
         self.root.after_idle(lambda vv=v: row.set_value_silent(vv))
 
     def _on_seat_reverse(self, key: str, msg: dict) -> None:
+        logger.info(f"SEAT_REVERSE: received {msg}")
         self.indicators.on_seat_sample(key, msg)
 
         sig_key = str(msg.get("key", ""))
         try:
             v_int = int(msg.get("value"))
-        except Exception:
+        except Exception as e:
+            logger.warning(f"SEAT_REVERSE: failed to parse value: {e}")
             return
 
         if sig_key == "seat.heating":
+            logger.info(f"SEAT_REVERSE: heating key, value={v_int}")
             self._startup_vm2_pending.discard("sim/cabin/seat/heating")
             row = self._rows_by_key.get("sim/cabin/seat/heating")
             if row is not None and time.monotonic() > self._reverse_inhibit.get("sim/cabin/seat/heating", 0.0):
+                logger.info(f"SEAT_REVERSE: updating dashboard heating toggle to {v_int != 0}")
                 self.root.after_idle(lambda r=row, on=(v_int != 0): r.set_toggle_silent(on))
 
         if sig_key == "seat.heating_cooling":
+            logger.info(f"SEAT_REVERSE: heating_cooling key, value={v_int}")
             self._startup_vm2_pending.discard("sim/cabin/seat/hc")
             row = self._rows_by_key.get("sim/cabin/seat/hc")
             if row is not None and time.monotonic() > self._reverse_inhibit.get("sim/cabin/seat/hc", 0.0):
@@ -778,6 +814,7 @@ def main() -> int:
     ]
 
     print(f"[pytk] dialing Zenoh endpoints: {endpoints}", flush=True)
+    logger.info(f"Dashboard starting - endpoints: {endpoints}, log: {LOG_FILE}")
 
     bus = ZenohBus(endpoints)
     root = Tk()
@@ -785,8 +822,10 @@ def main() -> int:
     try:
         root.mainloop()
     except KeyboardInterrupt:
+        logger.info("Dashboard interrupted by user")
         pass
     finally:
+        logger.info("Dashboard shutdown")
         bus.close()
     return 0
 

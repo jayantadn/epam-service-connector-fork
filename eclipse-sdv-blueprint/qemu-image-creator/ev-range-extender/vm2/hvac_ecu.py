@@ -1,86 +1,35 @@
-"""HVAC ECU - runs on VM2.
+"""HVAC ECU service — runs on VM2.
 
-Auto-deployed onto VM2 by cloud-init (no manual scp). Started
-automatically by the `ev-range-hvac.service` systemd unit on boot.
+Consumes the host dashboard's fan-speed command over Zenoh, publishes it
+to the kuksa-bridge wire namespace, and sends status updates back to the
+dashboard's indicator panel.
 
-Role:
-    The HVAC ECU is the device-side ECU that owns the cabin HVAC
-    branch of the local Kuksa Databroker on VM2. It has TWO duties:
+Signal flow (inbound — dashboard control)
+-----------------------------------------
+  pytk_dashboard.py  ──Zenoh sim/cabin/temp (tcp/:7461)──►  hvac_ecu.py
+                                                                │
+                                                     publish wire value ▼
+                      kuksa-bridge/Vehicle/Cabin/HVAC/AmbientAirTemperature
 
-    1. Inbound from the host dashboard:
-       Receives a value from `hardware-sim/pytk_dashboard.py` over
-       Zenoh on `sim/cabin/temp` and writes it into the local
-       `ev-range-cabin` Kuksa Databroker as
-       `Vehicle.Cabin.HVAC.AmbientAirTemperature` (logged as `OK`).
-       From there the kuksa-bridge mirrors the value to VM1's Kuksa.
+Signal flow (outbound — kuksa-bridge inbound from VM1)
+------------------------------------------------------
+    VM1 Kuksa change
+        └─► kuksa-bridge (VM1 outbound → Zenoh → VM2 inbound)
+                            └─► VM2 HVAC ECU receives bridge payload
 
-    2. Inbound from the kuksa-bridge (NEW):
-       Subscribes to the same VSS path on its OWN local Kuksa and,
-       on every change, (a) logs an `ACT` line so the actuation is
-       visible in `tail -F /tmp/ev-range-hvac.log` and (b) forwards
-       a key/value status envelope to the host dashboard over Zenoh
-       on `dash/status/hvac`. This is the path that carries writes
-       made by the EV Range Extender app on VM1: the app writes
-       to VM1's Kuksa -> kuksa-bridge mirrors VM1 -> VM2 -> this
-       subscriber fires here -> dashboard indicator turns green/red.
+Dashboard update (single path, both cases above)
+------------------------------------------------
+    VM2 HVAC ECU bridge handler
+        └─► Zenoh dash/status/hvac ──► pytk_dashboard.py indicator
 
-    NOTE on the dashboard label: the slider is labelled "Fan Speed"
-    in the GUI for the demo narrative, but the underlying Zenoh key
-    (`sim/cabin/temp`) and the VSS path
-    (`Vehicle.Cabin.HVAC.AmbientAirTemperature`) are deliberately
-    kept exactly as the original signal catalogue defines them. The
-    range model on VM1 interprets the numeric value as fan-speed
-    percent for the demo - see `vm1/range_ai.py` for the math.
-
-End-to-end:
-
-    pytk_dashboard.py (host, 192.168.100.1)
-        |   ^
-        |   | zenoh on dash/status/hvac
-        |   |   {"key": "hvac.fan_speed",
-        |   |    "value": <number>, "status": "on"|"off"}
-        |   |
-        | zenoh.put on:
-        |   sim/cabin/temp  (float, 0..100)
-        v   tcp/192.168.100.11:7461
-    hvac_ecu.py (this file, VM2)
-        |    ^
-        |    | kuksa subscribe_current_values()
-        v    | (ACT log + dashboard forward)
-    VM2 ev-range-cabin Kuksa Databroker (127.0.0.1:55555)
-        - Vehicle.Cabin.HVAC.AmbientAirTemperature = float
-        |
-        | (kuksa-bridge bridges over Zenoh to VM1)
-        v
-    VM1 ev-range Kuksa Databroker  <-- EV Range Extender app writes here
-        |
-        v
-    range_ai.py (recomputes Range)
-
-Wire format (host -> ECU):
-    Each Zenoh sample on `sim/cabin/temp` is a tiny JSON document:
-        {"value": <number>, "source": "<host>", "ts": "<iso>"}
-
-Wire format (ECU -> dashboard, NEW):
-    Each Zenoh sample on `dash/status/hvac` is a key/value envelope:
-        {"key": "hvac.fan_speed",
-         "value": <number>,
-         "status": "on" | "off",
-         "source": "vm2",
-         "ts": "<iso>"}
-    The dashboard drives the on-screen red/green indicator from
-    `status` alone; `value` is shown alongside for context.
-
-Manual control (when the systemd service is stopped):
-    sudo systemctl stop ev-range-hvac
-    cd /home/ubuntu/ev-range-extender/vm2
-    python3 hvac_ecu.py
-    python3 hvac_ecu.py --listen tcp/0.0.0.0:7461
+Note: 'sim/cabin/temp' carries a 0–100 fan-speed % value.
+Cross-VM VSS mirroring is handled exclusively by kuksa-bridge.
 """
 
 import argparse
 import asyncio
 import json
+import socket
 import sys
 import threading
 from datetime import datetime, timezone
@@ -94,26 +43,19 @@ from kuksa_client.grpc.aio import VSSClient
 DEFAULT_LISTEN = "tcp/0.0.0.0:7461"
 DEFAULT_KUKSA_HOST = "127.0.0.1"
 DEFAULT_KUKSA_PORT = 55555
+DEFAULT_BRIDGE_CONNECT = "tcp/127.0.0.1:7448"  # local VM2 bridge relay
+BRIDGE_KEY_PREFIX = "kuksa-bridge"
+HVAC_VSS_PATH = "Vehicle.Cabin.HVAC.AmbientAirTemperature"
+HVAC_BRIDGE_KEY = f"{BRIDGE_KEY_PREFIX}/{HVAC_VSS_PATH.replace('.', '/')}"
 
-# Source tag embedded in every `dash/status/hvac` envelope so the
-# dashboard can tell which VM the message came from (forensic only;
-# the dashboard does not filter on it today).
-SOURCE_LABEL = "vm2"
-
-# Reverse Zenoh key the dashboard subscribes to. Kept stable; pair it
-# with the matching DASH_KEY_PAIR below so the dashboard can use the
-# embedded `key` field rather than parsing the Zenoh key expression.
-DASH_STATUS_KEY = "dash/status/hvac"
-
-# Logical name used in the {"key": ..., "value": ...} envelope.
-# Stable across releases - the dashboard uses this to pick the right
-# indicator widget.
-DASH_KEY_PAIR = "hvac.fan_speed"
+SOURCE_LABEL = "vm2"           # embedded in every outgoing envelope
+DASH_STATUS_KEY = "dash/status/hvac"  # reverse channel to dashboard
+DASH_KEY_PAIR = "hvac.fan_speed"      # logical key used by dashboard indicator
 
 
 KEY_TO_VSS = {
     "sim/cabin/temp": (
-        "Vehicle.Cabin.HVAC.AmbientAirTemperature",
+        HVAC_VSS_PATH,
         float,
     ),
 }
@@ -124,7 +66,7 @@ KEY_PREFIX = "sim/cabin/temp"
 # VSS paths the ECU subscribes to on its local Kuksa to drive the
 # dashboard indicator. Listed separately from KEY_TO_VSS because the
 # dashboard-forward path is independent of the host-Zenoh ingest path.
-VSS_TO_DASH = ("Vehicle.Cabin.HVAC.AmbientAirTemperature",)
+VSS_TO_DASH = (HVAC_VSS_PATH,)
 
 
 def _hvac_status(value: float) -> str:
@@ -145,10 +87,33 @@ def log(msg: str) -> None:
     print(f"[{ts}] [hvac] {msg}", flush=True)
 
 
-def build_zenoh_config(listen_endpoint: str) -> zenoh.Config:
+def build_zenoh_config(listen_endpoint: str, connect_endpoints: tuple[str, ...] = ()) -> zenoh.Config:
     config = zenoh.Config()
     config.insert_json5("listen/endpoints", f'["{listen_endpoint}"]')
+    if connect_endpoints:
+        config.insert_json5("connect/endpoints", json.dumps(list(connect_endpoints)))
     return config
+
+
+def _bridge_payload(value: float, source: str) -> bytes:
+    return json.dumps({
+        "path": HVAC_VSS_PATH,
+        "value": float(value),
+        "unit": "percent",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "source": source,
+    }).encode("utf-8")
+
+
+def _dash_payload(value: float, source: str) -> bytes:
+    status = _hvac_status(value)
+    return json.dumps({
+        "key": DASH_KEY_PAIR,
+        "value": float(value),
+        "status": status,
+        "source": source,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }).encode("utf-8")
 
 
 class _LatestValueQueue:
@@ -197,19 +162,17 @@ class _LatestValueQueue:
 async def _consumer(
     queue: "_LatestValueQueue",
     kuksa: VSSClient,
-    dash_pub: "zenoh.Publisher",
 ) -> None:
-    """Drain the latest-value queue and push to Kuksa with dedup.
+    """Drain the latest-value queue and write to Kuksa with dedup.
 
-    One Kuksa RPC per asyncio loop tick that has pending data. Identical
-    re-writes (same path + same coerced value as last time) are dropped
-    so the broker isn't woken up needlessly during back-and-forth scrubs.
+    Only writes to Kuksa. Dashboard updates come exclusively from
+    _dashboard_forwarder (Kuksa subscription), which fires for both
+    slider writes and kuksa-bridge inbound writes.
     """
     last_sent: dict[str, Any] = {}
     while True:
         pending = await queue.take()
         updates: dict[str, Datapoint] = {}
-        ack_values: list[float] = []
         log_lines: list[str] = []
         for path, (raw_value, cast, src) in pending.items():
             try:
@@ -218,11 +181,9 @@ async def _consumer(
                 log(f"WARN cannot cast {raw_value!r} -> {cast.__name__} for {path}: {exc}")
                 continue
             if last_sent.get(path) == coerced:
-                ack_values.append(float(coerced))
                 continue
             updates[path] = Datapoint(coerced)
             last_sent[path] = coerced
-            ack_values.append(float(coerced))
             log_lines.append(f"OK   {path} = {coerced} (from {src})")
         if updates:
             try:
@@ -230,19 +191,6 @@ async def _consumer(
             except Exception as exc:
                 log(f"ERROR writing {len(updates)} key(s) to Kuksa: {exc}")
                 continue
-
-        for v in ack_values:
-            try:
-                dash_pub.put(json.dumps({
-                    "key": DASH_KEY_PAIR,
-                    "value": v,
-                    "status": _hvac_status(v),
-                    "source": SOURCE_LABEL,
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                }).encode("utf-8"))
-            except Exception as exc:
-                log(f"WARN dashboard ACK publish failed: {exc}")
-
         for line in log_lines:
             log(line)
 
@@ -291,7 +239,14 @@ async def _dashboard_forwarder(
             log(f"{tag} {path} = {dp.value}  -> dashboard {DASH_KEY_PAIR} (status={status})")
 
 
-async def run(listen: str, kuksa_host: str, kuksa_port: int) -> None:
+async def run(listen: str, kuksa_host: str, kuksa_port: int, bridge_connect: str) -> None:
+    # Enforce single-runtime architecture: VM2 never writes to a local
+    # Kuksa runtime, all VM1<->VM2 transfer goes through kuksa-bridge.
+    _ = (kuksa_host, kuksa_port)
+    await _run_without_kuksa(listen, bridge_connect)
+
+
+async def _run_with_kuksa(listen: str, kuksa_host: str, kuksa_port: int) -> None:
     log(f"Connecting to Kuksa Databroker at {kuksa_host}:{kuksa_port}...")
     async with VSSClient(kuksa_host, kuksa_port) as kuksa:
         log("Connected to Kuksa.")
@@ -333,7 +288,7 @@ async def run(listen: str, kuksa_host: str, kuksa_port: int) -> None:
             dash_pub = session.declare_publisher(DASH_STATUS_KEY)
             log(f"Reverse channel publisher on '{DASH_STATUS_KEY}' ready.")
 
-            consumer_task = asyncio.create_task(_consumer(queue, kuksa, dash_pub))
+            consumer_task = asyncio.create_task(_consumer(queue, kuksa))
 
             forwarder_task = asyncio.create_task(
                 _dashboard_forwarder(kuksa, dash_pub)
@@ -351,12 +306,90 @@ async def run(listen: str, kuksa_host: str, kuksa_port: int) -> None:
                 forwarder_task.cancel()
 
 
+async def _run_without_kuksa(listen: str, bridge_connect: str) -> None:
+    log(f"Opening Zenoh session, listen={listen}, connect=[{bridge_connect}] in bridge-wire mode")
+    with zenoh.open(build_zenoh_config(listen, (bridge_connect,))) as session:
+        stop_event = asyncio.Event()
+        dash_pub = session.declare_publisher(DASH_STATUS_KEY)
+        bridge_pub = session.declare_publisher(HVAC_BRIDGE_KEY)
+        last_outbound: dict[str, float] = {}
+        last_inbound: dict[str, float] = {}
+
+        def dashboard_listener(sample: zenoh.Sample) -> None:
+            key = str(sample.key_expr)
+            cfg = KEY_TO_VSS.get(key)
+            if cfg is None:
+                log(f"WARN ignoring unknown key '{key}'")
+                return
+            try:
+                msg = json.loads(sample.payload.to_string())
+            except Exception as exc:
+                log(f"WARN bad payload on '{key}': {exc}")
+                return
+            value = msg.get("value")
+            src = str(msg.get("source", socket.gethostname()))
+            if value is None:
+                log(f"WARN payload missing 'value' on '{key}': {msg}")
+                return
+            try:
+                coerced = float(value)
+            except (TypeError, ValueError) as exc:
+                log(f"WARN cannot cast {value!r} -> float for {HVAC_VSS_PATH}: {exc}")
+                return
+            if last_outbound.get(HVAC_VSS_PATH) == coerced:
+                return
+            last_outbound[HVAC_VSS_PATH] = coerced
+            try:
+                bridge_pub.put(_bridge_payload(coerced, SOURCE_LABEL))
+                dash_pub.put(_dash_payload(coerced, SOURCE_LABEL))
+            except Exception as exc:
+                log(f"ERROR forwarding dashboard value {coerced} over bridge: {exc}")
+                return
+            log(f"OK   {HVAC_VSS_PATH} = {coerced} (from {src})")
+
+        def bridge_listener(sample: zenoh.Sample) -> None:
+            try:
+                msg = json.loads(sample.payload.to_string())
+            except Exception as exc:
+                log(f"WARN bad bridge payload on '{sample.key_expr}': {exc}")
+                return
+            path = str(msg.get("path", ""))
+            src = str(msg.get("source", "?"))
+            value = msg.get("value")
+            if path != HVAC_VSS_PATH or value is None or src == SOURCE_LABEL:
+                return
+            try:
+                coerced = float(value)
+            except (TypeError, ValueError):
+                return
+            if last_inbound.get(path) == coerced:
+                return
+            last_inbound[path] = coerced
+            try:
+                dash_pub.put(_dash_payload(coerced, SOURCE_LABEL))
+            except Exception as exc:
+                log(f"ERROR forwarding bridge value {coerced} to dashboard: {exc}")
+                return
+            log(f"ACT  {path} = {coerced}  -> dashboard {DASH_KEY_PAIR} (status={_hvac_status(coerced)})")
+
+        dashboard_sub = session.declare_subscriber(KEY_PREFIX, dashboard_listener)
+        bridge_sub = session.declare_subscriber(f"{BRIDGE_KEY_PREFIX}/**", bridge_listener)
+        log(f"Bridge-wire mode ready. Dashboard key '{KEY_PREFIX}', bridge key '{HVAC_BRIDGE_KEY}'")
+        try:
+            await stop_event.wait()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            _ = dashboard_sub
+            _ = bridge_sub
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="HVAC ECU on VM2. Listens on a Zenoh endpoint for "
                     "sim/cabin/temp samples driven by the host PyTk "
-                    "dashboard, and writes the values into the local "
-                    "ev-range-cabin Kuksa Databroker."
+                    "dashboard, and writes the values into VM2 local "
+                    "Kuksa (bridge sync propagates to VM1)."
     )
     p.add_argument("--listen", default=DEFAULT_LISTEN,
                    help=f"Zenoh listen endpoint (default: {DEFAULT_LISTEN})")
@@ -364,13 +397,15 @@ def parse_args() -> argparse.Namespace:
                    help=f"Kuksa Databroker host (default: {DEFAULT_KUKSA_HOST})")
     p.add_argument("--kuksa-port", type=int, default=DEFAULT_KUKSA_PORT,
                    help=f"Kuksa Databroker port (default: {DEFAULT_KUKSA_PORT})")
+    p.add_argument("--bridge-connect", default=DEFAULT_BRIDGE_CONNECT,
+                   help=f"VM1 kuksa-bridge endpoint for no-local-Kuksa fallback (default: {DEFAULT_BRIDGE_CONNECT})")
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     try:
-        asyncio.run(run(args.listen, args.kuksa_host, args.kuksa_port))
+        asyncio.run(run(args.listen, args.kuksa_host, args.kuksa_port, args.bridge_connect))
     except KeyboardInterrupt:
         log("Stopping.")
         return 0

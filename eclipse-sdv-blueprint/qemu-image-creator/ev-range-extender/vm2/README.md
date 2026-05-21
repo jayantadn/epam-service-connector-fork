@@ -1,16 +1,17 @@
 # EV Range Extender — VM2 (Zonal / cabin) components
 
 VM2 owns the **cabin signals**. It hosts the digital.auto **SDV
-Runtime** (`ev-range-cabin` Kuksa Databroker on `127.0.0.1:55555`)
-plus three Python services that auto-start on every boot via systemd.
+Runtime clients plus a local Kuksa Databroker endpoint (`127.0.0.1:55555`).
+The VM2 ECUs write only to local Kuksa; cross-VM sharing to/from VM1 is
+done only by `kuksa-bridge`, and auto-starts via systemd.
 **You do not run anything on VM2 by hand during the demo.**
 
 | Component | File | systemd unit | Role |
 |---|---|---|---|
-| HVAC ECU | `hvac_ecu.py` | `ev-range-hvac.service` | Subscribes to host PyTk Zenoh key `sim/cabin/temp` on `tcp/0.0.0.0:7461` and writes the value into VM2's Kuksa under `Vehicle.Cabin.HVAC.AmbientAirTemperature`. |
-| Seat Control Module | `seat_ecu.py` | `ev-range-seat.service` | Subscribes to host PyTk Zenoh keys `sim/cabin/seat/heating` + `sim/cabin/seat/hc` on `tcp/0.0.0.0:7462` and writes them into VM2's Kuksa under `Vehicle.Cabin.Seat.Row1.DriverSide.{Heating,HeatingCooling}`. |
+| HVAC ECU | `hvac_ecu.py` | `ev-range-hvac.service` | Subscribes to host PyTk Zenoh key `sim/cabin/temp` on `tcp/0.0.0.0:7461` and writes the value into VM2 local Kuksa under `Vehicle.Cabin.HVAC.AmbientAirTemperature` (bridge sync carries it to VM1). |
+| Seat Control Module | `seat_ecu.py` | `ev-range-seat.service` | Subscribes to host PyTk Zenoh keys `sim/cabin/seat/heating` + `sim/cabin/seat/hc` on `tcp/0.0.0.0:7462` and writes them into VM2 local Kuksa under `Vehicle.Cabin.Seat.Row1.DriverSide.{Heating,HeatingCooling}` (bridge sync carries them to VM1). |
 
-## VSS signals on VM2's Kuksa
+## VSS signals written to VM2 local Kuksa
 
 | VSS path | Type | Source | Notes |
 |---|---|---|---|
@@ -26,9 +27,9 @@ plus three Python services that auto-start on every boot via systemd.
 
 ## VSS catalog sanity check
 
-`sdv-runtime` ships with the standard COVESA VSS catalog, so all
+VM1 `sdv-runtime` ships with the standard COVESA VSS catalog, so all
 three cabin paths are present out of the box. If you ever need to
-verify, open the Kuksa CLI on VM2:
+verify, run the Kuksa CLI on VM1:
 
 ```bash
 docker run -it --rm --network host \
@@ -42,17 +43,11 @@ metadata Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling
 ```
 
 All three should return `[metadata] OK`. If any returns `not_found`,
-the wrong container image is running:
+the wrong container image is running on VM1:
 
 ```bash
-docker inspect --format '{{.Config.Image}}' kuksa-databroker
+docker inspect --format '{{.Config.Image}}' sdv-runtime
 # expected: ghcr.io/eclipse-autowrx/sdv-runtime:latest
-```
-
-If you see something else, recreate the container with:
-
-```bash
-sudo /usr/local/bin/evrange-start-databroker
 ```
 
 ## Inspect / debug

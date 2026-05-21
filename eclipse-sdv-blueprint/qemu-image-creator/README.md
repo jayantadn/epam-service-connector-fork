@@ -16,8 +16,8 @@ Range-Compute AI on VM1 consumes those signals and publishes
 The whole stack is **auto-deployed** — every Python app under
 `ev-range-extender/` is embedded into the cloud-init seed and lands on
 the matching VM at first boot, started by systemd. The developer only
-runs **two** things: `setup.py` (or `setup.sh`) on the host, then
-`pytk_dashboard.py` in a second terminal.
+runs **two** things: `setup.py` (or `setup.sh`) on the host, then the
+PyTk dashboard from `hardware-sim/pytk_dashboard.py` in a second terminal.
 
 ---
 
@@ -26,7 +26,7 @@ runs **two** things: `setup.py` (or `setup.sh`) on the host, then
 ```
 WSL / Linux host (192.168.100.1 on br0)
   +---------------------------------------+
-  |  hardware-sim/pytk_dashboard.py       |
+   |  hardware-sim/pytk_dashboard.py       |
   |    Battery V / A / %                  |
   |    Fan Speed                          |
   |    Seat Heating + Seat Cooling toggles|
@@ -77,7 +77,7 @@ You never log into the VMs to start anything.
 | `input/network-vm1.yaml`, `input/network-vm2.yaml` | Static IP for the bridge NIC; DHCP for the SLIRP NIC (outbound internet). |
 | `ev-range-extender/vm1/` | `bms.py`, `range_ai.py` (auto-deployed to VM1). |
 | `ev-range-extender/vm2/` | `hvac_ecu.py`, `seat_ecu.py` (auto-deployed to VM2). |
-| `hardware-sim/pytk_dashboard.py` | The host-side Tk GUI you interact with during the demo. |
+| `hardware-sim/pytk_dashboard.py` | The host-side PyTk dashboard you interact with during the demo. |
 | `zenoh-demo/` | A bare Zenoh pub/sub example (independent of the EV demo). |
 | `output/` | Generated qcow2 disks, seed images, composed cloud-init, base Ubuntu image. Gitignored. |
 
@@ -159,22 +159,18 @@ created!`, every ECU service is already running on its VM.
 
 ### Step 5 — Launch the dashboard (Terminal 2)
 
-`hardware-sim/` lives next to `qemu-image-creator/` at the repo root,
-so reuse the same virtualenv created in Step 2 (the one in
-`qemu-image-creator/.venv`). [`requirements.txt`](requirements.txt)
-already covers both `setup.py` (PyYAML) and the dashboard
-(`eclipse-zenoh`); the system `python3-tk` package was installed via
-`apt` in Step 1.
+`hardware-sim/` lives next to `qemu-image-creator/` at the repo root.
+Launch the PyTk dashboard.
 
 ```bash
 cd path/to/eclipse-sdv-blueprint/qemu-image-creator
-source .venv/bin/activate
 cd ../hardware-sim
-python3 -m pip install -r requirements.txt
 python3 pytk_dashboard.py
 ```
 
-A Tk window opens with three sections:
+The PyTk window opens locally on the host desktop.
+
+The dashboard has three sections:
 
 | Section | Controls | Drives VSS path |
 |---|---|---|

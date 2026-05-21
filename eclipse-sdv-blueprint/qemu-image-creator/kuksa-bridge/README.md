@@ -65,7 +65,7 @@ running on Zenoh port `7448`. Legacy components (`zenoh_publisher.py` and
       |          cabin : BIDIRECTIONAL on VM1                    cabin : BIDIRECTIONAL on VM2
       v                                                                         |
    VM1 Kuksa accepts cabin writes from VM2 (dashboard path)                     v
-                                                              VM2 ev-range-cabin Kuksa Databroker
+                                                              VM2 local Kuksa Databroker
                                                                   (127.0.0.1:55555)
                                                                   ^
                                                                   | hvac_ecu / seat_ecu write cabin

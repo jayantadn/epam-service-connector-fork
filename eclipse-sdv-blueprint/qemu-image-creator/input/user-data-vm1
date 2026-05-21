@@ -202,11 +202,12 @@ runcmd:
   - systemctl restart ssh
 
   # Install Python packages required by the EV Range Extender Python apps.
-  #   - kuksa-client: ev-range-extender/vm1/range_ai.py + someip_client.py
+  #   - kuksa-client==0.5.1: VM apps import Datapoint from kuksa_client.grpc
+  #     and require the 0.5.x API shape.
   #   - someipy (>=1.0,<2.0): someip-demo/ + ev-range-extender/vm1/someip_client.py (active SOME/IP / Eclipse-SCore path)
   #   - grpcio + grpcio-tools: grpc-demo/
   - |
-    pip3 install --break-system-packages --ignore-installed kuksa-client grpcio grpcio-tools \
+    pip3 install --break-system-packages --ignore-installed 'kuksa-client==0.5.1' grpcio grpcio-tools \
       eclipse-zenoh 'someipy>=1.0,<2.0' pyyaml jsonschema requests packaging \
       >> /tmp/evrange-pip.log 2>&1 || \
       echo "WARNING: pip install reported errors, see /tmp/evrange-pip.log" >> /tmp/evrange-pip.log
@@ -218,3 +219,4 @@ runcmd:
   # Create a generic apps directory for ad-hoc deployments.
   - mkdir -p /home/ubuntu/apps
   - chown -R ubuntu:ubuntu /home/ubuntu/apps
+ 

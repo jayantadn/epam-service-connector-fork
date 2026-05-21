@@ -5,115 +5,44 @@
 # https://opensource.org/licenses/MIT.
 #
 # SPDX-License-Identifier: MIT
-"""kuksa-bridge: a current-value bridge between two Kuksa Databrokers over Zenoh.
+"""kuksa-bridge — bidirectional current-value bridge between two Kuksa Databrokers over Zenoh.
 
-This is the project's own "kuksa-bridge" component, the same role as the
-arrow labelled `kuksa-bridge / eclipse-zenoh` in the Phase 1 architecture
-diagram.
+Architecture
+------------
+Each VM runs one kuksa_bridge.py process. The two processes peer over Zenoh
+and mirror VSS current values between their local Kuksa Databrokers:
 
-Why not the upstream ``zenoh-kuksa-provider``?
-    The upstream provider in eclipse-kuksa/kuksa-incubation is built for
-    the device-side actuator pattern (Kuksa side: subscribes to
-    ``actuator_target``; Zenoh side: only consumes samples whose
-    attachment is ``"currentValue"``). Two instances on two Databrokers
-    therefore do NOT mirror current values to each other - which is
-    exactly what our cabin-signal pipeline needs (VM2 Kuksa current ->
-    VM1 Kuksa current). This module is a small, config-driven replacement
-    that does mirror current values, while keeping the same JSON wire
-    envelope ``zenoh_publisher.py`` / ``zenoh_client.py`` already use,
-    so it can run side-by-side with the legacy pair on a different
-    Zenoh port.
+    Host (192.168.100.1)
+      pytk_dashboard.py  ──Zenoh──►  VM1 bms.py / VM2 hvac_ecu.py / VM2 seat_ecu.py
 
-Roles
------
-The bridge as a whole is **bidirectional**: each VM runs one
-``kuksa_bridge.py`` process that both publishes to and subscribes from
-Zenoh, so cabin signals flow VM2->VM1 *and* battery / range signals
-flow VM1->VM2 over the same Zenoh peer connection.
+    VM1 (192.168.100.10)             VM2 (192.168.100.11)
+    ┌──────────────────┐             ┌──────────────────┐
+    │  Kuksa Databroker│◄────────────│  Kuksa Databroker│
+    │  (sdv-runtime    │  kuksa-     │  (standalone,    │
+    │   container,     │  bridge     │   port 55555)    │
+    │   port 55555)    │  (Zenoh     │                  │
+    │                  │  peer-link) │  hvac_ecu.py     │
+    │  bms.py          │────────────►│  seat_ecu.py     │
+    │  range_ai.py     │             │                  │
+    └──────────────────┘             └──────────────────┘
 
-The role of an individual *signal* on a given VM is set per-signal in
-the JSON config and tells the bridge whether it owns the writer side
-of that signal locally:
+Signal direction (per signal in the JSON config)
+------------------------------------------------
+  outbound      local Kuksa ──subscribe──► Zenoh publish
+  inbound       Zenoh subscribe ──► local Kuksa write
+  bidirectional both; self-tagged messages are dropped to prevent echo loops
 
-* ``outbound``      Kuksa  -> Zenoh
-                    The local Databroker is the source of truth for
-                    this signal. Subscribe to its current value;
-                    publish every change to Zenoh on key
-                    ``<key_prefix>/<vss/path/with/slashes>``.
+Zenoh wire envelope
+-------------------
+    {"path": "Vehicle.Cabin.HVAC.AmbientAirTemperature",
+     "value": 42.0, "unit": "percent",
+     "timestamp": "2026-...Z", "source": "vm2"}
 
-* ``inbound``       Zenoh  -> Kuksa
-                    The local Databroker is a mirror for this signal.
-                    Subscribe to ``<key_prefix>/**`` on Zenoh; for
-                    each received sample whose ``path`` field matches
-                    a configured ``inbound`` signal, write the value
-                    into the local Databroker as a current value,
-                    coerced to the signal's ``type``.
-
-* ``bidirectional`` Both of the above. The inbound listener filters
-                    out messages whose ``source`` field equals our own
-                    ``source_label`` so we never echo our own writes
-                    back into Kuksa.
-
-Typical Phase 1 deployment (current scope: 3 cabin signals only)::
-
-    VM1                                        VM2
-    ----                                       ----
-    Vehicle.Cabin.HVAC.                        Vehicle.Cabin.HVAC.
-        AmbientAirTemperature : bidirectional      AmbientAirTemperature : bidirectional
-    Vehicle.Cabin.Seat.Row1.                   Vehicle.Cabin.Seat.Row1.
-        DriverSide.Heating    : bidirectional      DriverSide.Heating    : bidirectional
-    Vehicle.Cabin.Seat.Row1.                   Vehicle.Cabin.Seat.Row1.
-        DriverSide.HeatingCooling             :     DriverSide.HeatingCooling          :
-                                bidirectional                                  bidirectional
-
-Battery state and ``Vehicle.Powertrain.Range`` are intentionally NOT
-on the bridge: nothing on VM2 currently consumes them, and adding
-them only inflated the log. They can be put back at any time by
-extending the two JSON configs - the bridge code itself does not
-care about the specific paths.
-
-The same wire envelope as ``zenoh_publisher.py`` is used so the legacy
-``zenoh_client.py`` would also accept these messages if the key prefixes
-overlapped::
-
-    {
-        "path":   "Vehicle.Cabin.HVAC.AmbientAirTemperature",
-        "value":  50.0,
-        "unit":   "percent",
-        "timestamp": "2026-...Z",
-        "source": "vm2"
-    }
-
-Configuration file
-------------------
-JSON. See ``bridge-config-vm1.json`` / ``bridge-config-vm2.json`` for
-working examples used by the cloud-init deployment::
-
-    {
-      "kuksa": { "host": "127.0.0.1", "port": 55555 },
-      "zenoh": {
-        "mode": "peer",
-        "listen":  ["tcp/0.0.0.0:7448"],
-        "connect": []
-      },
-      "key_prefix": "ev-range/cabin",
-      "source_label": "vm2",
-      "signals": [
-        {
-          "path": "Vehicle.Cabin.HVAC.AmbientAirTemperature",
-          "type": "float",
-          "unit": "percent",
-          "direction": "outbound"
-        },
-        ...
-      ]
-    }
-
-Manual run (when the systemd unit is stopped)::
-
-    sudo systemctl stop ev-range-kuksa-bridge
-    cd /home/ubuntu/kuksa-bridge
-    python3 kuksa_bridge.py --config /etc/kuksa-bridge/config.json
+Configuration
+-------------
+See bridge-config-vm1.json / bridge-config-vm2.json for full examples.
+Key fields: kuksa.host/port, zenoh.mode/listen/connect, key_prefix,
+source_label, signals[].path/type/unit/direction.
 """
 
 from __future__ import annotations
@@ -192,6 +121,7 @@ class BridgeConfig:
     key_prefix: str            # Zenoh key prefix; we publish on f"{prefix}/<vss/path>"
     source_label: str          # embedded in outbound payloads ("vm1" / "vm2" / hostname)
     suppress_initial_outbound: bool
+    relay_only: bool           # if True, no Kuksa connection; just forward Zenoh messages
     signals: tuple[SignalSpec, ...]
 
     @property
@@ -263,6 +193,7 @@ def load_config(path: Path) -> BridgeConfig:
         key_prefix=raw.get("key_prefix", "ev-range/cabin"),
         source_label=raw.get("source_label", socket.gethostname()),
         suppress_initial_outbound=bool(raw.get("suppress_initial_outbound", False)),
+        relay_only=bool(raw.get("relay_only", False)),
         signals=tuple(signals),
     )
 
@@ -336,7 +267,12 @@ class _InboundQueue:
                 self._evt.clear()
 
 
-async def _inbound_consumer(queue: _InboundQueue, kuksa: VSSClient) -> None:
+async def _inbound_consumer(
+    queue: _InboundQueue,
+    kuksa: VSSClient,
+    recent_inbound: dict[str, Any] | None = None,
+    recent_inbound_src: dict[str, str] | None = None,
+) -> None:
     last_sent: dict[str, Any] = {}
     while True:
         pending = await queue.take()
@@ -352,6 +288,14 @@ async def _inbound_consumer(queue: _InboundQueue, kuksa: VSSClient) -> None:
                 continue
             updates[path] = Datapoint(coerced)
             last_sent[path] = coerced
+            # Record the value we are about to write so the outbound
+            # loop can suppress the immediate kuksa change-event echo
+            # (otherwise that re-emission would carry source=cfg.source_label
+            # and overwrite the true origin tag on the peer side).
+            if recent_inbound is not None:
+                recent_inbound[path] = coerced
+            if recent_inbound_src is not None:
+                recent_inbound_src[path] = src
             log_lines.append(f"IN   {path} = {coerced} (from {src})")
         if not updates:
             continue
@@ -384,23 +328,11 @@ def _make_zenoh_listener(
         if path is None or value is None:
             log(f"WARN payload missing 'path'/'value' on '{sample.key_expr}': {msg}")
             return
-        # Loop-prevention for bidirectional setups. Without this, two
-        # peers each running an outbound+inbound role on the same VSS
-        # path would ping-pong: peer A writes X to its Kuksa, outbound
-        # publishes X tagged source=A, peer B's inbound writes X to its
-        # Kuksa, peer B's outbound sees the change and republishes X
-        # tagged source=B, peer A's inbound writes X back into A's
-        # Kuksa - one wasted round trip per change. The Kuksa
-        # subscribe_current_values stream only fires on actual changes
-        # so it does NOT escalate to an infinite loop, but the extra
-        # writes are pointless. Drop self-tagged messages here so the
-        # ping-pong never starts.
+        # Drop self-tagged messages to prevent bidirectional echo.
         if src == cfg.source_label:
             return
         spec = inbound_specs.get(path)
         if spec is None:
-            # Not in this bridge's inbound whitelist - silently ignore.
-            # (Could be a signal we only publish outbound, or noise.)
             return
         queue.offer(spec, value, src)
 
@@ -428,6 +360,8 @@ async def _outbound_loop(
     outbound_specs: dict[str, SignalSpec],
     kuksa: VSSClient,
     publishers: dict[str, "zenoh.Publisher"],
+    recent_inbound: dict[str, Any] | None = None,
+    recent_inbound_src: dict[str, str] | None = None,
 ) -> None:
     log(
         f"Outbound: subscribed to {len(outbound_specs)} VSS path(s) on local Kuksa - "
@@ -459,6 +393,19 @@ async def _outbound_loop(
                 continue
             if last_fwd.get(path) == dp.value:
                 continue
+            # Echo suppression: if this exact value was just written by
+            # the inbound consumer (i.e. the peer originated it), skip
+            # republishing so the peer's true source tag survives.
+            if (
+                recent_inbound is not None
+                and path in recent_inbound
+                and recent_inbound[path] == dp.value
+            ):
+                recent_inbound.pop(path, None)
+                if recent_inbound_src is not None:
+                    recent_inbound_src.pop(path, None)
+                last_fwd[path] = dp.value
+                continue
             try:
                 payload = _make_payload(spec, dp.value, cfg.source_label)
                 publishers[path].put(payload)
@@ -483,7 +430,10 @@ def _format_endpoints(prefix: str, eps: Iterable[str]) -> str:
 
 
 async def run(cfg: BridgeConfig) -> int:
-    log(f"Connecting to local Kuksa Databroker at {cfg.kuksa_host}:{cfg.kuksa_port}...")
+    if cfg.relay_only:
+        log("Mode: Relay-only (no Kuksa connection)")
+    else:
+        log(f"Connecting to local Kuksa Databroker at {cfg.kuksa_host}:{cfg.kuksa_port}...")
     log(f"Zenoh mode={cfg.zenoh_mode}, "
         f"{_format_endpoints('listen', cfg.zenoh_listen)}, "
         f"{_format_endpoints('connect', cfg.zenoh_connect)}")
@@ -495,6 +445,9 @@ async def run(cfg: BridgeConfig) -> int:
     for spec in cfg.signals:
         zk = _vss_to_zenoh_key(cfg.key_prefix, spec.path)
         log(f"   - {spec.path}  ({spec.vss_type}, {spec.direction}) <-> {zk}")
+
+    if cfg.relay_only:
+        return await _relay_only(cfg)
 
     outbound_specs = {s.path: s for s in cfg.signals if s.is_outbound}
     inbound_specs = {s.path: s for s in cfg.signals if s.is_inbound}
@@ -510,10 +463,16 @@ async def run(cfg: BridgeConfig) -> int:
             consumer_task: asyncio.Task | None = None
             subscriber = None  # keep the handle alive for the session's lifetime
 
+            # Shared maps used to break the inbound->kuksa->outbound echo.
+            recent_inbound: dict[str, Any] = {}
+            recent_inbound_src: dict[str, str] = {}
+
             # ---- Inbound (Zenoh -> Kuksa) ------------------------------
             if inbound_specs:
                 queue = _InboundQueue(loop)
-                consumer_task = asyncio.create_task(_inbound_consumer(queue, kuksa))
+                consumer_task = asyncio.create_task(
+                    _inbound_consumer(queue, kuksa, recent_inbound, recent_inbound_src)
+                )
                 tasks.append(consumer_task)
                 key_expr = f"{cfg.key_prefix}/**"
                 listener = _make_zenoh_listener(cfg, inbound_specs, queue)
@@ -528,7 +487,10 @@ async def run(cfg: BridgeConfig) -> int:
                     zk = _vss_to_zenoh_key(cfg.key_prefix, path)
                     publishers[path] = session.declare_publisher(zk)
                 tasks.append(asyncio.create_task(
-                    _outbound_loop(cfg, outbound_specs, kuksa, publishers)
+                    _outbound_loop(
+                        cfg, outbound_specs, kuksa, publishers,
+                        recent_inbound, recent_inbound_src,
+                    )
                 ))
 
             if not tasks:
@@ -578,6 +540,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+async def _relay_only(cfg: BridgeConfig) -> int:
+    """Relay-only mode: keep a Zenoh peer session open without Kuksa.
+
+    This is used on VM2 where there is no local Kuksa. Zenoh itself routes
+    traffic between the local ECU peers and the VM1 bridge peer; this process
+    only provides the local listen endpoint and the VM1 connect endpoint.
+    """
+    with zenoh.open(build_zenoh_config(cfg)) as session:
+        log("Zenoh session open (relay-only mode).")
+
+        log("Relay-only: no app-level subscribers or publishers declared; Zenoh routes peer traffic.")
+        log("Relay running. Ctrl+C to stop.")
+        try:
+            await asyncio.sleep(float('inf'))
+        except KeyboardInterrupt:
+            pass
+        finally:
+            _ = session
+    return 0
+
+
 def _print_validation_summary(cfg: BridgeConfig) -> None:
     print(f"Kuksa     : {cfg.kuksa_host}:{cfg.kuksa_port}")
     print(f"Zenoh     : mode={cfg.zenoh_mode}, "
@@ -585,6 +568,7 @@ def _print_validation_summary(cfg: BridgeConfig) -> None:
           f"connect={list(cfg.zenoh_connect)}")
     print(f"KeyPrefix : {cfg.key_prefix}")
     print(f"Source    : {cfg.source_label}")
+    print(f"RelayOnly : {cfg.relay_only}")
     print(f"SuppressInitialOutbound : {cfg.suppress_initial_outbound}")
     print(f"Signals   : {len(cfg.signals)} total "
           f"({sum(s.is_outbound for s in cfg.signals)} outbound, "

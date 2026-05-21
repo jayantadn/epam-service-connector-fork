@@ -147,9 +147,10 @@ docker run -d \
 ### Hardware simulator
 
 ```bash
-	./hardware-sim/setup.sh
-	pip install -r hardware-sim/requirements.txt
-	python hardware-sim/pytk_dashboard.py
+	# Start PyTk-based hardware simulator
+	# See full steps in hardware-sim/README.md
+	cd hardware-sim
+	python3 pytk_dashboard.py
 ```
 
 ### Application Execution

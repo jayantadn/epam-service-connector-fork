@@ -1,47 +1,22 @@
-"""Battery Monitoring System (BMS) - runs on VM1.
+"""BMS (Battery Monitoring System) service — runs on VM1.
 
-Auto-deployed onto VM1 by cloud-init (no manual scp). Started
-automatically by the `ev-range-bms.service` systemd unit on boot.
+Receives raw battery telemetry from the host dashboard over Zenoh and
+writes it to the local Kuksa Databroker (sdv-runtime, 127.0.0.1:55555).
 
-Role:
-    The BMS is the device-side ECU that owns the
-    `Vehicle.Powertrain.TractionBattery.*` branch of the local Kuksa
-    Databroker on VM1. It receives raw battery values from the host
-    PyTk hardware simulator (`hardware-sim/pytk_dashboard.py`) over
-    Zenoh, casts them to the VSS-defined datatype, and writes them
-    into the local `ev-range` Kuksa Databroker. From there
-    `range_ai.py` consumes them and recomputes
-    `Vehicle.Powertrain.Range`.
+Signal flow
+-----------
+  pytk_dashboard.py (host)
+    ├─ sim/battery/voltage  ──Zenoh (tcp/:7460)──►
+    ├─ sim/battery/current  ──────────────────────►  bms.py (this)
+    └─ sim/battery/soc      ──────────────────────►      │
+                                                         ▼
+                                              VM1 Kuksa Databroker
+                                              Vehicle.Powertrain.TractionBattery.*
+                                                         │
+                                                         ▼
+                                              range_ai.py  ──►  Vehicle.Powertrain.Range
 
-End-to-end:
-
-    pytk_dashboard.py (host, 192.168.100.1)
-        |
-        | zenoh.put on:
-        |   sim/battery/voltage  (float, V)
-        |   sim/battery/current  (float, A)
-        |   sim/battery/soc      (float, %)
-        v   tcp/192.168.100.10:7460
-    bms.py (this file, VM1)
-        |
-        v
-    VM1 ev-range Kuksa Databroker (127.0.0.1:55555)
-        - Vehicle.Powertrain.TractionBattery.CurrentVoltage   = float
-        - Vehicle.Powertrain.TractionBattery.CurrentCurrent   = float
-        - Vehicle.Powertrain.TractionBattery.StateOfCharge.Current = float
-        |
-        v
-    range_ai.py (recomputes Range)
-
-Wire format:
-    Each Zenoh sample is a tiny JSON document:
-        {"value": <number>, "source": "<host>", "ts": "<iso>"}
-
-Manual control (when the systemd service is stopped):
-    sudo systemctl stop ev-range-bms
-    cd /home/ubuntu/ev-range-extender/vm1
-    python3 bms.py            # use defaults
-    python3 bms.py --listen tcp/0.0.0.0:7460  --kuksa-port 55555
+Zenoh wire format: {"value": <number>, "source": "host", "ts": "<iso>"}
 """
 
 import argparse
@@ -60,8 +35,7 @@ DEFAULT_KUKSA_HOST = "127.0.0.1"
 DEFAULT_KUKSA_PORT = 55555
 
 
-# Zenoh key expression -> (VSS path, type-cast for Kuksa write).
-# Keep this in sync with hardware-sim/pytk_dashboard.py PUBLISHED_KEYS.
+# Zenoh key -> (VSS path, cast). Keep in sync with pytk_dashboard.py PUBLISHED_KEYS.
 KEY_TO_VSS = {
     "sim/battery/voltage": (
         "Vehicle.Powertrain.TractionBattery.CurrentVoltage",

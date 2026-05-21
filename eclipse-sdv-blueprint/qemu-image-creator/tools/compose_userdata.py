@@ -1,43 +1,25 @@
 #!/usr/bin/env python3
-"""Compose cloud-init user-data with auto-deployed ev-range-extender code.
+"""Compose cloud-init user-data for VM1 and VM2.
 
-Reads the human-edited template `input/user-data-vm{1,2}` and produces a
-`output/user-data-vm{1,2}.composed` file that, in addition to everything
-the template already does, also:
+Reads a human-edited template (`input/user-data-vm{1,2}`) and produces a
+`.composed` output file that embeds all Python source files and systemd
+service units needed to run the ev-range-extender stack on that VM.
 
-  1. Drops the entire `ev-range-extender/` Python source tree onto the
-     VM under `/home/ubuntu/ev-range-extender/` via cloud-init's
-     `write_files` (with base64 encoding so quoting is safe).
+What gets injected
+------------------
+  VM1:  bms.py, range_ai.py, kuksa_bridge.py + bridge-config-vm1.json
+        systemd units: ev-range-bms, ev-range-range-ai, ev-range-kuksa-bridge
 
-  2. Drops six systemd unit files under `/etc/systemd/system/` so every
-     Python file deployed onto a VM starts automatically on boot.
-     The user only ever runs `setup.py` (host) and `pytk_dashboard.py`
-     (host); nothing is started by hand inside a VM.
+  VM2:  hvac_ecu.py, seat_ecu.py, kuksa_bridge.py + bridge-config-vm2.json
+        systemd units: ev-range-hvac, ev-range-seat, ev-range-kuksa-bridge
 
-         VM1                              VM2
-         ev-range-bms.service             ev-range-hvac.service
-         ev-range-range-ai.service        ev-range-seat.service
-      ev-range-kuksa-bridge.service    ev-range-kuksa-bridge.service
+All files are base64-encoded inside cloud-init `write_files` entries so no
+manual scp is needed; everything starts automatically on first boot.
 
-  3. Adds `runcmd` entries to chown the source tree to ubuntu:ubuntu,
-     reload systemd, and enable+start every unit in VM_UNITS for the
-     selected VM.
-
-The result is a `#cloud-config` YAML document that `cloud-localds` then
-embeds into the seed image. No manual `scp` is ever needed during the
-demo.
-
-Usage (called by setup.py; can be run by hand for debugging):
-
-    python3 tools/compose_userdata.py \\
-        --template input/user-data-vm1 \\
-        --output   output/user-data-vm1.composed \\
-        --vm       vm1
-
-    python3 tools/compose_userdata.py \\
-        --template input/user-data-vm2 \\
-        --output   output/user-data-vm2.composed \\
-        --vm       vm2
+Usage (called by setup.py):
+    python3 tools/compose_userdata.py --template input/user-data-vm1 \\
+                                      --output output/user-data-vm1.composed \\
+                                      --vm vm1
 """
 
 from __future__ import annotations
@@ -55,9 +37,7 @@ import yaml
 # What ends up on each VM
 # ---------------------------------------------------------------------
 
-# Python files (and their target paths on the VM), keyed by VM.
-# Zenoh is the only cross-VM transport in this repo, so there is no
-# longer a shared `common/` package to deploy.
+# Source files deployed onto each VM and their target paths.
 
 VM_FILES = {
     "vm1": {
@@ -78,7 +58,8 @@ VM_FILES = {
 # matching ECU under user `ubuntu`, with auto-restart on failure.
 
 def _systemd_unit(description: str, exec_cmd: str, after_kuksa_helper: str,
-                  log_path: str) -> str:
+                  log_path: str, databroker_host: str = "127.0.0.1",
+                  require_databroker_wait: bool = True) -> str:
     # First-boot vs subsequent-boot timing notes:
     #
     #   * On the very first boot, cloud-init still has to `pip3 install
@@ -111,6 +92,18 @@ def _systemd_unit(description: str, exec_cmd: str, after_kuksa_helper: str,
     # The real gate is `cloud-final.service` (cloud-init's runcmd
     # phase) plus the two ExecStartPre wait loops below.
     _ = after_kuksa_helper  # kept in the signature for callsite clarity
+    if not require_databroker_wait:
+        wait_for_databroker = ""
+    elif databroker_host == "127.0.0.1":
+        wait_for_databroker = (
+            "ExecStartPre=/bin/bash -c 'for i in $(seq 1 600); do ss -ltn 2>/dev/null | grep -q \":55555 \" && exit 0; sleep 1; done; exit 1'"
+        )
+    else:
+        wait_for_databroker = (
+            "ExecStartPre=/bin/bash -c 'for i in $(seq 1 600); do "
+            f"timeout 1 bash -c \"</dev/tcp/{databroker_host}/55555\" "
+            ">/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'"
+        )
     return f"""[Unit]
 Description={description}
 # cloud-final.service is cloud-init's runcmd stage. Ordering after it
@@ -130,11 +123,8 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/ev-range-extender
 Environment=PYTHONUNBUFFERED=1
-# 1) Wait up to 10 min for the local Kuksa Databroker to start listening
-#    on TCP :55555. First-boot docker-pull of the SDV Runtime image can
-#    take several minutes on slow links; on later boots this returns in
-#    a fraction of a second.
-ExecStartPre=/bin/bash -c 'for i in $(seq 1 600); do ss -ltn 2>/dev/null | grep -q ":55555 " && exit 0; sleep 1; done; exit 1'
+# 1) Wait for the target Kuksa Databroker when this service depends on one.
+{wait_for_databroker}
 # 2) Wait up to 5 min for the Python deps to actually be importable.
 #    With After=cloud-final.service this is already true on entry, but
 #    we keep the check as a hard safety net so the unit refuses to crash
@@ -155,7 +145,7 @@ WantedBy=multi-user.target
 # same on both VMs - the bridge's role (source / sink) is encoded in
 # the JSON config that VM_FILES already drops at the canonical path
 # /home/ubuntu/kuksa-bridge/bridge-config.json.
-def _kuksa_bridge_unit(after_kuksa_helper: str) -> str:
+def _kuksa_bridge_unit(after_kuksa_helper: str, require_databroker_wait: bool = True) -> str:
     return _systemd_unit(
         description="EV Range Extender - kuksa-bridge (current-value mirror over Zenoh)",
         exec_cmd=(
@@ -164,6 +154,7 @@ def _kuksa_bridge_unit(after_kuksa_helper: str) -> str:
         ),
         after_kuksa_helper=after_kuksa_helper,
         log_path="/tmp/ev-range-kuksa-bridge.log",
+        require_databroker_wait=require_databroker_wait,
     )
 
 
@@ -194,24 +185,28 @@ VM_UNITS = {
     },
     "vm2": {
         # HVAC ECU: subscribes to host PyTk Zenoh (sim/cabin/*) and
-        # writes Vehicle.Cabin.HVAC.* into VM2's Kuksa.
+        # writes Vehicle.Cabin.HVAC.* into VM2 local Kuksa.
         "ev-range-hvac.service": _systemd_unit(
             description="EV Range Extender - HVAC ECU",
             exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm2/hvac_ecu.py",
-            after_kuksa_helper="evrange-start-databroker",
+            after_kuksa_helper="evrange-start-runtime",
             log_path="/tmp/ev-range-hvac.log",
+            require_databroker_wait=False,
         ),
         # Seat Control Module: subscribes to host PyTk Zenoh
-        # (sim/seat/*) and writes Vehicle.Cabin.Seat.* into VM2's Kuksa.
+        # (sim/seat/*) and writes Vehicle.Cabin.Seat.* into VM2 local Kuksa.
         "ev-range-seat.service": _systemd_unit(
             description="EV Range Extender - Seat Control Module",
             exec_cmd="/usr/bin/python3 /home/ubuntu/ev-range-extender/vm2/seat_ecu.py",
-            after_kuksa_helper="evrange-start-databroker",
+            after_kuksa_helper="evrange-start-runtime",
             log_path="/tmp/ev-range-seat.log",
+            require_databroker_wait=False,
         ),
-        # New project-local kuksa-bridge (VM2 source role).
+        # VM2 kuksa-bridge: stateless Zenoh relay (no local Kuksa).
+        # Forwards cabin signals between local ECUs and VM1 bridge.
         "ev-range-kuksa-bridge.service": _kuksa_bridge_unit(
-            after_kuksa_helper="evrange-start-databroker",
+            after_kuksa_helper="evrange-start-runtime",
+            require_databroker_wait=False,
         ),
     },
 }
