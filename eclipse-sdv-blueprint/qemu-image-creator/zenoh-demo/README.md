@@ -1,154 +1,149 @@
-# Zenoh demo: VM1 -> VM2
+# Zenoh Demo
 
-Minimal Eclipse Zenoh pub/sub demo running between the two QEMU VMs that
-`setup.sh` / `vm2_launch.sh` provision. **VM1 publishes**, **VM2 subscribes**.
+This folder contains a minimal Eclipse Zenoh peer-to-peer smoke test between
+the two QEMU VMs.
 
-> **Not the main project demo.** This folder is a lightweight
-> connectivity smoke-test for `tcp/7447` between the two VMs. The
-> production-style Zenoh use (with VSS payloads bridged into Kuksa
-> Databrokers on both sides) lives in
-> [`../ev-range-extender/`](../ev-range-extender/) — see
-> `ev-range-extender/vm2/zenoh_publisher.py` (publisher) and
-> `ev-range-extender/vm1/zenoh_client.py` (subscriber).
+It is intentionally separate from the EV Range Extender data path. Use it when
+you only want to confirm that VM1 and VM2 can exchange Zenoh samples over the
+private `br0` network.
+
+---
+
+## Files
+
+| File | Runs on | Purpose |
+|---|---|---|
+| `sub.py` | VM2 | Listens on `tcp/0.0.0.0:7447` and subscribes to `demo/vm/**`. |
+| `pub.py` | VM1 | Dials VM2 at `tcp/192.168.100.11:7447` and publishes JSON samples on `demo/vm/vm1`. |
+
+No Zenoh router is required. `sub.py` listens, `pub.py` connects directly.
+
+---
 
 ## Topology
 
-```
-VM1 (192.168.100.10)                       VM2 (192.168.100.11)
-+---------------------+    tcp/7447        +---------------------+
-|  pub.py             |  ----------------> |  sub.py             |
-|  zenoh publisher    |                    |  zenoh subscriber   |
-|  connects to        |                    |  listens on         |
-|  tcp/192.168.100.11 |                    |  tcp/0.0.0.0:7447   |
-+---------------------+                    +---------------------+
+```text
+VM1                                              VM2
+192.168.100.10                                  192.168.100.11
+
+pub.py  --connect tcp/192.168.100.11:7447  ->   sub.py --listen tcp/0.0.0.0:7447
+key: demo/vm/vm1                                subscription: demo/vm/**
 ```
 
-- `sub.py` opens a Zenoh session that **listens** on `tcp/0.0.0.0:7447` and
-  subscribes to the wildcard key `demo/vm/**`.
-- `pub.py` opens a Zenoh session that **connects** to
-  `tcp/192.168.100.11:7447` and publishes a JSON payload on
-  `demo/vm/vm1` once per second.
-
-No `zenohd` router is needed — the two Zenoh sessions peer directly over
-the existing `br0` bridge.
+---
 
 ## Prerequisites
 
-`eclipse-zenoh` must be installed on both VMs. Cloud-init already does this:
+`eclipse-zenoh` must be installed on both VMs. The QEMU cloud-init templates
+install it automatically.
 
-- VM1: `input/user-data-vm1` (the big `pip3 install ...` in `runcmd`)
-- VM2: `input/user-data-vm2` (the `pip3 install ... eclipse-zenoh ...` in `runcmd`)
-
-Quick verification on each VM:
+Check on either VM:
 
 ```bash
-python3 -c "import zenoh; print('zenoh OK', zenoh.__version__)"
+python3 -c "import zenoh; print('zenoh OK')"
 ```
 
-If the import fails, reinstall manually:
+Install manually if needed:
 
 ```bash
 sudo pip3 install --break-system-packages --ignore-installed eclipse-zenoh
 ```
 
-## Step-by-step run
+---
 
-### 1. Copy the demo onto both VMs (from the host)
+## Run
+
+Copy the scripts to the VMs from the host:
 
 ```bash
-cd /path/to/qemu-image-creator
-
-# VM2 needs sub.py
-sshpass -p 'ubuntu' scp zenoh-demo/sub.py ubuntu@192.168.100.11:/home/ubuntu/
-
-# VM1 needs pub.py
-sshpass -p 'ubuntu' scp zenoh-demo/pub.py ubuntu@192.168.100.10:/home/ubuntu/
+cd path/to/eclipse-sdv-blueprint/qemu-image-creator
+scp zenoh-demo/sub.py ubuntu@192.168.100.11:/home/ubuntu/
+scp zenoh-demo/pub.py ubuntu@192.168.100.10:/home/ubuntu/
 ```
 
-### 2. Start the subscriber on VM2
+Start the subscriber on VM2:
 
 ```bash
-ssh ubuntu@192.168.100.11        # password: ubuntu
+ssh ubuntu@192.168.100.11
 python3 sub.py
 ```
 
-Expected output:
+Expected VM2 output:
 
-```
+```text
 [SUB] Opening Zenoh session, listening on 'tcp/0.0.0.0:7447'
 [SUB] Subscribed to 'demo/vm/**'. Waiting for samples... (Ctrl+C to exit)
 ```
 
-Leave this terminal open.
-
-### 3. Start the publisher on VM1
-
-In a separate terminal on the host:
+Start the publisher on VM1:
 
 ```bash
-ssh ubuntu@192.168.100.10        # password: ubuntu
+ssh ubuntu@192.168.100.10
 python3 pub.py
 ```
 
-Expected output on VM1:
+Expected VM1 output:
 
-```
+```text
 [PUB] Opening Zenoh session, dialling 'tcp/192.168.100.11:7447'
 [PUB] Publishing on 'demo/vm/vm1' every 1.0s
-[PUB] key=demo/vm/vm1 msg={'from': 'vm1', 'index': 0, ...}
-[PUB] key=demo/vm/vm1 msg={'from': 'vm1', 'index': 1, ...}
+[PUB] key=demo/vm/vm1 msg={...}
 ```
 
-Expected output on VM2 (`sub.py`):
+Expected VM2 output:
 
-```
-[SUB] key=demo/vm/vm1 msg={'from': 'vm1', 'index': 0, ...}
-[SUB] key=demo/vm/vm1 msg={'from': 'vm1', 'index': 1, ...}
+```text
+[SUB] key=demo/vm/vm1 msg={...}
 ```
 
-If you see those samples flowing, Zenoh is now carrying messages between
-the two VMs end to end.
+---
 
 ## Useful flags
 
 `pub.py`:
 
 | Flag | Default | Purpose |
-|------|---------|---------|
-| `--peer` | `tcp/192.168.100.11:7447` | Where to dial the subscriber |
-| `--key` | `demo/vm/vm1` | Key expression to publish on |
-| `--interval` | `1.0` | Seconds between publishes |
-| `--count` | `0` (forever) | Stop after N messages |
-| `--name` | hostname | Sender name embedded in payload |
+|---|---|---|
+| `--peer` | `tcp/192.168.100.11:7447` | Subscriber endpoint to dial. |
+| `--key` | `demo/vm/vm1` | Key to publish. |
+| `--interval` | `1.0` | Seconds between messages. |
+| `--count` | `0` | Number of messages; `0` means forever. |
+| `--name` | hostname | Sender name in the JSON payload. |
 
 `sub.py`:
 
 | Flag | Default | Purpose |
-|------|---------|---------|
-| `--listen` | `tcp/0.0.0.0:7447` | Endpoint to listen on |
-| `--key` | `demo/vm/**` | Key expression to subscribe to |
+|---|---|---|
+| `--listen` | `tcp/0.0.0.0:7447` | Endpoint to listen on. |
+| `--key` | `demo/vm/**` | Key expression to subscribe to. |
+
+Example using a different port:
+
+```bash
+# VM2
+python3 sub.py --listen tcp/0.0.0.0:7450
+
+# VM1
+python3 pub.py --peer tcp/192.168.100.11:7450
+```
+
+---
 
 ## Troubleshooting
 
-**`pub.py` cannot reach VM2**
+If VM1 cannot reach VM2, confirm the subscriber is running and the port is
+reachable from VM1:
 
 ```bash
-# From VM1
 nc -vz 192.168.100.11 7447
 ```
 
-If that fails, `sub.py` is not running (or not listening on `0.0.0.0:7447`),
-or WSL is dropping bridged traffic. The repo's main `README.md` documents
-the WSL fix:
+If port `7447` is already in use, choose another listen/peer port with the
+flags above.
+
+If VM-to-VM traffic is blocked, re-run the QEMU setup or restore the bridge
+forwarding rule on the host:
 
 ```bash
-# On the WSL host (NOT inside a VM)
 sudo iptables -A FORWARD -i br0 -o br0 -j ACCEPT
 ```
-
-**Port 7447 already in use on VM2**
-
-`tcp/7447` is the default Zenoh peer port, so any other Zenoh router
-or peer started on VM2 will hold it first. Stop the conflicting
-process, or pass `--listen tcp/0.0.0.0:7448` to `sub.py` and
-`--peer tcp/192.168.100.11:7448` to `pub.py`.

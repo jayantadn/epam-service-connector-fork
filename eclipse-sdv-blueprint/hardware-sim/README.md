@@ -1,100 +1,121 @@
-# Hardware Simulator (PyTk dashboard)
+# Hardware Simulator
 
-Tkinter GUI that runs **on the host** and replaces the manual Kuksa
-CLI workflow during the EV Range Extender demo. Sliders and toggles
-publish over **Eclipse Zenoh** to the three ECUs running inside the
-VMs.
+`pytk_dashboard.py` is the host-side Tk dashboard for driving the EV Range
+Extender VM services. It publishes battery, HVAC, and seat inputs over Eclipse
+Zenoh, and it listens for reverse status messages from the VM2 ECUs so the UI
+can show whether HVAC and seat actions are active.
 
-## Controls
+This folder is only the host control surface. VM provisioning, QEMU networking,
+and systemd service deployment are documented in
+[`../qemu-image-creator/README.md`](../qemu-image-creator/README.md).
 
-| Section in the GUI | Control | Zenoh key | Receiver | Lands in (Kuksa, on VM) |
-|---|---|---|---|---|
-| Battery (VM1 - bms.py) | Battery Voltage (320-420 V) | `sim/battery/voltage` | `bms.py` (VM1) | `Vehicle.Powertrain.TractionBattery.CurrentVoltage` |
-| Battery (VM1 - bms.py) | Battery Current (0-200 A) | `sim/battery/current` | `bms.py` (VM1) | `Vehicle.Powertrain.TractionBattery.CurrentCurrent` |
-| Battery (VM1 - bms.py) | Battery % (0-100) | `sim/battery/soc` | `bms.py` (VM1) | `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` |
-| Cabin HVAC (VM2 - hvac_ecu.py) | Fan Speed (0-100, slider) | `sim/cabin/temp` | `hvac_ecu.py` (VM2) | `Vehicle.Cabin.HVAC.AmbientAirTemperature` |
-| Cabin Seat (VM2 - seat_ecu.py) | Seat Heating (toggle) | `sim/cabin/seat/heating` | `seat_ecu.py` (VM2) | `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` (0 / 100) |
-| Cabin Seat (VM2 - seat_ecu.py) | Seat Cooling (toggle) | `sim/cabin/seat/hc` | `seat_ecu.py` (VM2) | `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` (0 / -100) |
+---
 
-`range_ai.py` on VM1 sees the Kuksa updates and recomputes
-`Vehicle.Powertrain.Range`. `Seat Heating` and `Seat Cooling` are
-mutually exclusive — turning one on automatically forces the other
-off.
+## What the dashboard controls
 
-> **Signal note:** the "Fan Speed" slider rides on the existing VSS
-> path `Vehicle.Cabin.HVAC.AmbientAirTemperature`. The six VSS paths
-> stay exactly as the original signal catalogue defines them; only
-> the *interpretation* of the value (fan-speed percent vs. degrees
-> Celsius) is decided by `range_ai.py` on VM1. Higher Fan Speed →
-> more cabin draw → less Range.
+| UI section | Control | Zenoh key | Receiver |
+|---|---|---|---|
+| Battery | Battery Voltage | `sim/battery/voltage` | VM1 `bms.py` on `tcp/7460` |
+| Battery | Battery Current | `sim/battery/current` | VM1 `bms.py` on `tcp/7460` |
+| Battery | Battery % | `sim/battery/soc` | VM1 `bms.py` on `tcp/7460` |
+| Cabin HVAC | Fan Speed | `sim/cabin/temp` | VM2 `hvac_ecu.py` on `tcp/7461` |
+| Cabin Seat | Seat Heating | `sim/cabin/seat/heating` | VM2 `seat_ecu.py` on `tcp/7462` |
+| Cabin Seat | Seat Cooling | `sim/cabin/seat/hc` | VM2 `seat_ecu.py` on `tcp/7462` |
 
-Each Zenoh sample is a tiny JSON document:
+Each publish payload is JSON:
 
 ```json
-{ "value": 50, "source": "host-name", "ts": "2026-...Z" }
+{
+  "value": 50,
+  "source": "host-name",
+  "ts": "2026-05-21T...Z"
+}
 ```
 
-## Topology
+Seat Heating and Seat Cooling are mutually exclusive in the UI. Turning one on
+turns the other off and publishes the matching off value.
 
-```
-Host (192.168.100.1)                    VMs (auto-deployed by cloud-init)
-+----------------------------+
-| pytk_dashboard.py          |   tcp/192.168.100.10:7460
-|   3 battery sliders        |  ----------------> bms.py        (VM1)
-|   1 fan-speed slider       |   tcp/192.168.100.11:7461
-|   2 seat toggles           |  ----------------> hvac_ecu.py   (VM2)
-|                            |   tcp/192.168.100.11:7462
-|   Zenoh peer publisher     |  ----------------> seat_ecu.py   (VM2)
-+----------------------------+
-```
+---
 
-## Prerequisites (host)
+## Status indicators
 
-- **Python 3.9+** with `tkinter`. On Debian/Ubuntu:
-  ```bash
-  sudo apt install -y python3-tk
-  ```
-- **Zenoh Python binding**. The recommended path is to reuse the
-  virtualenv created in `qemu-image-creator/` (a sibling of this
-  folder at the repo root):
-  ```bash
-  cd ../qemu-image-creator
-  source .venv/bin/activate
-  python3 -m pip install -r requirements.txt
-  ```
-  Or, without a virtualenv:
-  ```bash
-  pip install --user --break-system-packages eclipse-zenoh
-  ```
-- **Network**: the WSL host must already have the `br0` bridge from
-  `setup.py` / `setup.sh` (so `192.168.100.1` is on the same L2
-  segment as the VMs). The matching `iptables FORWARD -i br0 -o
-  br0 -j ACCEPT` rule is added by `setup.py`.
+The dashboard also subscribes to status channels from VM2:
+
+| Indicator | Zenoh key | Source |
+|---|---|---|
+| HVAC Fan | `dash/status/hvac` | `hvac_ecu.py` |
+| Seat Heating / Cooling | `dash/status/seat` | `seat_ecu.py` |
+
+The reverse status path is used for both local dashboard actions and values
+that arrive from VM1 through `kuksa-bridge`. This lets the UI show the current
+actuator state instead of only the last slider or toggle position.
+
+---
+
+## Drive simulation
+
+The `Drive` button starts a simple battery drain loop inside the dashboard. It
+periodically lowers the Battery % control and republishes the updated state of
+charge. This is useful for watching `range_ai.py` react without manually moving
+the SoC slider.
+
+The drive loop does not run inside the VMs; it is just a host-side publisher.
+
+---
 
 ## Run
 
-Defaults match `setup.py` / `setup.sh` addressing (VM1
-`192.168.100.10`, VM2 `192.168.100.11`):
+Install the host dependencies, then run the dashboard from this directory:
 
 ```bash
+cd path/to/eclipse-sdv-blueprint/hardware-sim
+./setup.sh
+python3 -m pip install -r requirements.txt
 python3 pytk_dashboard.py
 ```
 
-To override addresses / ports:
+`setup.sh` installs the Tk runtime package required by the dashboard UI:
+
+```bash
+sudo apt install -y python3-tk
+```
+
+If you are already using the virtual environment from `qemu-image-creator`, you
+can reuse it:
+
+```bash
+cd path/to/eclipse-sdv-blueprint/qemu-image-creator
+source .venv/bin/activate
+cd ../hardware-sim
+python3 pytk_dashboard.py
+```
+
+Defaults match the QEMU VM setup:
+
+| Target | Default |
+|---|---|
+| VM1 IP | `192.168.100.10` |
+| VM2 IP | `192.168.100.11` |
+| BMS port | `7460` |
+| HVAC port | `7461` |
+| Seat port | `7462` |
+
+Override them when needed:
 
 ```bash
 python3 pytk_dashboard.py \
     --vm1 192.168.100.10 \
     --vm2 192.168.100.11 \
-    --bms-port  7460 \
+    --bms-port 7460 \
     --hvac-port 7461 \
     --seat-port 7462
 ```
 
-## Verify the round trip
+---
 
-With the GUI open and the VMs booted (the ECUs auto-start on boot),
-in a separate terminal SSH into a VM and tail one of the ECU logs:
+## Verify
+
+Tail the VM service logs while moving controls:
 
 ```bash
 ssh ubuntu@192.168.100.10 'tail -f /tmp/ev-range-bms.log'
@@ -102,51 +123,35 @@ ssh ubuntu@192.168.100.11 'tail -f /tmp/ev-range-hvac.log'
 ssh ubuntu@192.168.100.11 'tail -f /tmp/ev-range-seat.log'
 ```
 
-Move a slider in the GUI → the matching ECU prints `OK <vss-path> = <value>`.
-
-For the recomputed range:
+Tail the range output on VM1:
 
 ```bash
 ssh ubuntu@192.168.100.10 'tail -f /tmp/ev-range-range-ai.log'
 ```
 
-## Troubleshooting
-
-**GUI starts but nothing happens on the VM side**
-
-- An ECU systemd service is stopped:
-  ```bash
-  ssh ubuntu@192.168.100.10 'systemctl is-active ev-range-bms'
-  ssh ubuntu@192.168.100.11 'systemctl is-active ev-range-hvac ev-range-seat'
-  ```
-- The host `iptables FORWARD -i br0 -o br0 -j ACCEPT` rule is missing
-  (re-run `python3 setup.py` from the parent folder, or add the rule
-  manually).
-- Wrong VM IP / port — pass `--vm1 / --vm2 / --bms-port / ...` to
-  override.
-
-**`ImportError: No module named '_tkinter'`**
-
-Tk is not installed on the host: `sudo apt install -y python3-tk`.
-
-**`ImportError: No module named 'zenoh'`**
-
-The `qemu-image-creator/` virtualenv isn't active or its deps weren't
-installed:
+The dashboard itself logs to:
 
 ```bash
-cd ../qemu-image-creator
-source .venv/bin/activate
-python3 -m pip install -r requirements.txt
+/tmp/pytk_dashboard.log
 ```
 
-**Slider feels laggy**
+---
 
-Each drag publishes on every tick. If that's too noisy, edit
-`_on_scale` in `pytk_dashboard.py` to debounce / throttle.
+## Troubleshooting
 
-**Window is invisible / cursor disappears (WSLg)**
+If the UI opens but VM logs do not change, check that the QEMU VMs are running
+and that the ECU services are active:
 
-The dashboard already forces `cursor=left_ptr` and lifts/focuses the
-window on launch. If the cursor still disappears after a long idle,
-click anywhere in the window once.
+```bash
+ssh ubuntu@192.168.100.10 'systemctl is-active ev-range-bms'
+ssh ubuntu@192.168.100.11 'systemctl is-active ev-range-hvac ev-range-seat'
+```
+
+If Python cannot import Tk:
+
+```bash
+sudo apt install -y python3-tk
+```
+
+If Python cannot import Zenoh, install the dashboard requirements or activate
+the virtual environment used for the QEMU setup.

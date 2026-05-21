@@ -1,81 +1,195 @@
-# EV Range Extender — VM2 (Zonal / cabin) components
+# EV Range Extender VM2 Services
 
-VM2 owns the **cabin signals**. It hosts the digital.auto **SDV
-Runtime clients plus a local Kuksa Databroker endpoint (`127.0.0.1:55555`).
-The VM2 ECUs write only to local Kuksa; cross-VM sharing to/from VM1 is
-done only by `kuksa-bridge`, and auto-starts via systemd.
-**You do not run anything on VM2 by hand during the demo.**
+VM2 is the cabin ECU side of the QEMU setup. It receives HVAC and seat commands
+from the host dashboard, publishes those values onto the `kuksa-bridge` Zenoh
+wire namespace, and sends status updates back to the dashboard indicators.
 
-| Component | File | systemd unit | Role |
-|---|---|---|---|
-| HVAC ECU | `hvac_ecu.py` | `ev-range-hvac.service` | Subscribes to host PyTk Zenoh key `sim/cabin/temp` on `tcp/0.0.0.0:7461` and writes the value into VM2 local Kuksa under `Vehicle.Cabin.HVAC.AmbientAirTemperature` (bridge sync carries it to VM1). |
-| Seat Control Module | `seat_ecu.py` | `ev-range-seat.service` | Subscribes to host PyTk Zenoh keys `sim/cabin/seat/heating` + `sim/cabin/seat/hc` on `tcp/0.0.0.0:7462` and writes them into VM2 local Kuksa under `Vehicle.Cabin.Seat.Row1.DriverSide.{Heating,HeatingCooling}` (bridge sync carries them to VM1). |
-
-## VSS signals written to VM2 local Kuksa
-
-| VSS path | Type | Source | Notes |
-|---|---|---|---|
-| `Vehicle.Cabin.HVAC.AmbientAirTemperature` | float | host PyTk Fan Speed slider → `hvac_ecu.py` | Slider is 0..100; the dashboard labels it "Fan Speed" and `range_ai.py` on VM1 interprets the value as fan-speed percent (see top-level README). |
-| `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` | int (% 0..100) | host PyTk Seat Heating toggle → `seat_ecu.py` | 0 = off, 100 = on. |
-| `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` | int (% -100..100) | host PyTk Seat Cooling toggle → `seat_ecu.py` | 0 = off, -100 = cooling on. (Positive values are valid VSS but the dashboard never publishes them.) |
-
-> **Why these exact paths?** They're the canonical COVESA VSS 4.x
-> leaves shipped with the `sdv-runtime` image. There is no
-> `Seat.Ventilation` leaf in COVESA — the standard way to express
-> ventilation on a seat is `HeatingCooling` with a negative percent,
-> which is what the dashboard publishes when "Seat Cooling" is on.
-
-## VSS catalog sanity check
-
-VM1 `sdv-runtime` ships with the standard COVESA VSS catalog, so all
-three cabin paths are present out of the box. If you ever need to
-verify, run the Kuksa CLI on VM1:
-
-```bash
-docker run -it --rm --network host \
-    ghcr.io/eclipse-kuksa/kuksa-databroker-cli:main
-```
+VM2 address in the default setup:
 
 ```text
-metadata Vehicle.Cabin.HVAC.AmbientAirTemperature
-metadata Vehicle.Cabin.Seat.Row1.DriverSide.Heating
-metadata Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling
+192.168.100.11
 ```
 
-All three should return `[metadata] OK`. If any returns `not_found`,
-the wrong container image is running on VM1:
+---
+
+## Services
+
+| Service | File | Purpose |
+|---|---|---|
+| `ev-range-hvac.service` | `hvac_ecu.py` | Receives fan-speed commands and publishes the HVAC VSS bridge envelope. |
+| `ev-range-seat.service` | `seat_ecu.py` | Receives seat heating/cooling commands and publishes seat VSS bridge envelopes. |
+| `ev-range-kuksa-bridge.service` | `../../kuksa-bridge/kuksa_bridge.py` | Runs VM2 bridge relay mode and connects to VM1 on `tcp/192.168.100.10:7448`. |
+
+VM2 is intentionally lightweight. The ECUs run in bridge-wire mode and do not
+need a local Kuksa Databroker for the current VM2 path.
+
+---
+
+## HVAC ECU
+
+`hvac_ecu.py` listens on:
+
+```text
+tcp/0.0.0.0:7461
+```
+
+It consumes dashboard messages from:
+
+| Zenoh key | VSS path | Value |
+|---|---|---|
+| `sim/cabin/temp` | `Vehicle.Cabin.HVAC.AmbientAirTemperature` | `0..100` fan-speed percent |
+
+On each dashboard update it publishes a bridge envelope on:
+
+```text
+kuksa-bridge/Vehicle/Cabin/HVAC/AmbientAirTemperature
+```
+
+It also publishes dashboard status on:
+
+```text
+dash/status/hvac
+```
+
+Status is `on` when the fan value is greater than zero, otherwise `off`.
+
+---
+
+## Seat ECU
+
+`seat_ecu.py` listens on:
+
+```text
+tcp/0.0.0.0:7462
+```
+
+It consumes dashboard messages from:
+
+| Zenoh key | VSS path | Value |
+|---|---|---|
+| `sim/cabin/seat/heating` | `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` | `0` or `100` |
+| `sim/cabin/seat/hc` | `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` | `0` or `-100` for cooling |
+
+It publishes bridge envelopes on:
+
+```text
+kuksa-bridge/Vehicle/Cabin/Seat/Row1/DriverSide/Heating
+kuksa-bridge/Vehicle/Cabin/Seat/Row1/DriverSide/HeatingCooling
+```
+
+It also publishes dashboard status on:
+
+```text
+dash/status/seat
+```
+
+Status mapping:
+
+| Value | Dashboard status |
+|---|---|
+| Heating `> 0` | `heating` |
+| HeatingCooling `> 0` | `heating` |
+| HeatingCooling `< 0` | `cooling` |
+| Zero values | `off` |
+
+---
+
+## Bridge-wire mode
+
+Both VM2 ECUs connect to the local VM2 bridge relay at:
+
+```text
+tcp/127.0.0.1:7448
+```
+
+The VM2 bridge relay then dials VM1:
+
+```text
+tcp/192.168.100.10:7448
+```
+
+This gives two useful flows:
+
+| Flow | Path |
+|---|---|
+| Dashboard to VM1 | dashboard -> VM2 ECU -> VM2 bridge relay -> VM1 bridge -> VM1 Kuksa |
+| VM1 to dashboard | VM1 Kuksa -> VM1 bridge -> VM2 bridge relay -> VM2 ECU -> dashboard status key |
+
+The second flow lets VM1-originated cabin commands produce `ACT` log lines in
+the VM2 ECU logs and update the dashboard indicators.
+
+---
+
+## Inspect
+
+Check service status on VM2:
 
 ```bash
-docker inspect --format '{{.Config.Image}}' sdv-runtime
-# expected: ghcr.io/eclipse-autowrx/sdv-runtime:latest
+systemctl status ev-range-hvac ev-range-seat ev-range-kuksa-bridge
 ```
 
-## Inspect / debug
-
-Both services log to `/tmp/ev-range-*.log` (world-readable, no sudo needed):
+Tail logs:
 
 ```bash
 tail -f /tmp/ev-range-hvac.log
 tail -f /tmp/ev-range-seat.log
+tail -f /tmp/ev-range-kuksa-bridge.log
 ```
 
-Status / restart:
+Restart services:
 
 ```bash
-systemctl status   ev-range-hvac ev-range-seat
-sudo systemctl restart ev-range-hvac
+sudo systemctl restart ev-range-hvac ev-range-seat ev-range-kuksa-bridge
 ```
 
-To run any of them by hand (with the systemd unit stopped first):
+---
+
+## Manual run
+
+Stop the systemd unit before running a service directly:
 
 ```bash
 sudo systemctl stop ev-range-hvac
 cd /home/ubuntu/ev-range-extender/vm2
-python3 hvac_ecu.py            # defaults are correct
+python3 hvac_ecu.py
 ```
+
+Run the seat ECU manually:
+
+```bash
+sudo systemctl stop ev-range-seat
+cd /home/ubuntu/ev-range-extender/vm2
+python3 seat_ecu.py
+```
+
+Useful options:
+
+| Option | Default | Purpose |
+|---|---|---|
+| `--listen` | `tcp/0.0.0.0:7461` for HVAC, `tcp/0.0.0.0:7462` for seat | Dashboard-facing Zenoh listener. |
+| `--bridge-connect` | `tcp/127.0.0.1:7448` | Local VM2 bridge relay endpoint. |
+
+`--kuksa-host` and `--kuksa-port` remain available in the scripts for the older
+Kuksa-backed mode, but the current `run()` path uses bridge-wire mode.
+
+---
 
 ## Troubleshooting
 
-See the top-level [`README.md`](../../README.md) "Troubleshooting"
-section for the common cases (cloud-init hang, service inactive,
-dashboard slider with no effect, etc.).
+If dashboard controls do not appear in VM2 logs, check the ECU listener ports
+and service state:
+
+```bash
+systemctl is-active ev-range-hvac ev-range-seat
+```
+
+If VM2 logs show local updates but VM1 does not receive cabin values, inspect
+the bridge relay:
+
+```bash
+tail -f /tmp/ev-range-kuksa-bridge.log
+```
+
+If dashboard indicators do not change, confirm the dashboard is subscribed to
+`dash/status/hvac` and `dash/status/seat` by checking `/tmp/pytk_dashboard.log`
+on the host.

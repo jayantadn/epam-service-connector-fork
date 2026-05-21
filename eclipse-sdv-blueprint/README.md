@@ -39,7 +39,7 @@ The journey below shows how the system interacts across three steps — from the
 
 You can explore and run the prototype directly in the digital.auto playground — no hardware needed:
 
- **[Open Prototype on digital.auto Playground](https://playground.digital.auto/model/67f76c0d8c609a0027662a69/library/prototype/69ce30f438bb8e98f0af5ac8/view)**
+ **[Open Prototype on digital.auto Playground](https://playground.digital.auto/model/67f76c0d8c609a0027662a69/library/prototype/69ce30f438bb8e98f0af5ac8/code)**
 
 The playground lets you simulate vehicle signals and see the app's logic in action before touching any real device. OEMs can use this to validate business logic, test signal flows, and iterate on the customer journey end-to-end.
 
@@ -64,19 +64,17 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 ### How the flow works
 
 ```
-1. EV Range Extender Prototype
+1. EV Range Extender Prototype 
         ↓
 2. App is published to the AosCloud App Registry
         ↓
-3. AosCloud fetches the app and pushes it to VM1 / HPC-VM (App Fetching)
+3. AosCloud fetches the app and pushes it to the HPC-VM (App Fetching)
         ↓
-4. AosCore on VM1 executes the app via the digital.auto runtime
+4. AosCore on the HPC-VM executes the app via the digital.auto runtime
         ↓
-5. Host PyTk dashboard publishes simulated hardware signals to VM1 and VM2 ECUs
+5. The app reads/writes vehicle signals via eclipse-kuksa
         ↓
-6. VM1 Kuksa is the single signal runtime; VM2 runs HVAC/Seat ECUs and a stateless Zenoh relay
-	↓
-7. Cabin signals flow between VM1 and VM2 over eclipse-zenoh via kuksa-bridge
+6. Signals flow between HPC-VM and End-VM over eclipse-zenoh
 ```
 
 ### What's running in each layer
@@ -84,19 +82,18 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 | Layer | What It Is | What It Does |
 |---|---|---|
 |  **AosCloud** | Fleet Management + App Registry | Stores, versions and distributes vehicle apps to the fleet |
-|  **Host** | PyTk Hardware Simulator | Publishes battery, HVAC and seat signals to the VM ECUs over Eclipse Zenoh |
-|  **VM1 / HPC-VM** (Linux) | AosCore + digital.auto runtime + Eclipse Kuksa + Battery Monitoring System + Range Compute AI | The signal runtime and application host — runs the vehicle app, stores canonical VSS state and computes range |
-|  **VM2 / End-VM** (Linux) | HVAC ECU, Seat Control Module, stateless kuksa-bridge relay | Simulates cabin end-ECUs without creating an additional digital.auto runtime or Kuksa Databroker |
-|  **Communication stack** | Eclipse Zenoh + kuksa-bridge | Connects VM1 and VM2; VM2 relays cabin traffic while VM1 owns the single Kuksa signal runtime |
+|  **HPC-VM** (Linux) | AosCore + digital.auto + Eclipse AutoWorx stack | The brain — runs the vehicle app, handles signal logic |
+|  **End-VM** (Linux) | Seat Control Module, HVAC ECU, Range Compute AI, Battery Monitoring System | Simulates the end-ECU layer that controls physical components |
+|  **Communication stack** | Eclipse Zenoh | Connects HPC-VM and End-VM — lightweight pub/sub messaging |
 
 ### Eclipse components inside the blueprint phase 1
 
 | Component | Role |
 |---|---|
 | `eclipse-autoworx` | Automates app lifecycle management on the vehicle |
-| `eclipse-kuksa` | Vehicle signal broker on VM1 — reads and writes VSS signals |
+| `eclipse-kuksa` | Vehicle signal broker — reads and writes VSS signals |
 | `eclipse-velocitas` | Framework for building vehicle apps in Python/C++ |
-| `eclipse-zenoh` | Modern pub/sub communication protocol between the host dashboard, VM1 and VM2 |
+| `eclipse-zenoh` | Modern pub/sub communication protocol between HPC-VM and End-VM |
 
 ### Automated Setup
 
@@ -115,10 +112,8 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 		python qemu-image-creator/setup.py
 	```
 1. When the automated setup script is ran:
-	- VM1 / HPC-VM and VM2 / End-VM are launched
-	- digital.auto runtime and Kuksa Databroker are automatically launched on VM1
-	- VM2 starts only the HVAC ECU, Seat Control Module and stateless Zenoh relay
-1. To restart a VM manually, use `qemu-image-creator/vm1_launch.sh` or `qemu-image-creator/vm2_launch.sh`
+	- HPC-VM and End VM is launched by default
+	- digital.auto runtime is automatically launched. 
 
 
 
@@ -151,11 +146,25 @@ docker run -d \
 
 ### Hardware simulator
 
+The hardware simulator is the host-side control dashboard for Phase 1. It
+replaces physical battery, HVAC, and seat inputs with a Tk-based UI, then
+publishes those values over Eclipse Zenoh to the ECUs running inside the QEMU
+VMs.
+
+Use it after the automated VM setup has completed and both VMs are running. The
+dashboard sends battery values to VM1 and cabin controls to VM2; the VM services
+then write or bridge those signals so the EV Range Extender app can recompute
+range.
+
 ```bash
 	./hardware-sim/setup.sh
 	pip install -r hardware-sim/requirements.txt
 	python hardware-sim/pytk_dashboard.py
 ```
+
+For the signal map, dashboard controls, reverse status indicators, and
+troubleshooting steps, see the dedicated
+[hardware simulator README](hardware-sim/README.md).
 
 ### Application Execution
 

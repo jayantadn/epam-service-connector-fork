@@ -1,214 +1,174 @@
-# kuksa-bridge — bidirectional VSS sync between two Kuksa Databrokers over Eclipse Zenoh
+# kuksa-bridge
 
-`kuksa-bridge` is the project's own implementation of the
-`kuksa-bridge / eclipse-zenoh` arrow in the Phase 1 architecture
-diagram. One instance runs on each VM; the two peers connect to each
-other over a single TCP-backed Eclipse Zenoh session and **carry VSS
-current-value updates in both directions on the same connection**.
+`kuksa_bridge.py` mirrors selected VSS current values between the VM1 Kuksa
+Databroker and the VM2 bridge-wire services over Eclipse Zenoh.
 
-**Scope today: 3 cabin signals only.**
+In the current VM setup, VM1 owns the Kuksa Databroker. VM2 runs cabin ECUs in
+bridge-wire mode: they publish cabin VSS envelopes to the local VM2 bridge and
+listen for values coming back from VM1. VM2 does not require its own local
+Kuksa Databroker for this path.
 
-```
-Vehicle.Cabin.HVAC.AmbientAirTemperature           (float)
-Vehicle.Cabin.Seat.Row1.DriverSide.Heating         (int)
-Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling  (int)
-```
+---
 
-These three signals are all marked `bidirectional`, so:
+## Bridged signals
 
-* Dashboard slider movements on the host write into VM2's Kuksa via
-  `hvac_ecu.py` / `seat_ecu.py`, then flow VM2 → VM1 so anything on
-  VM1 (the EV Range Extender app, future range models, etc.) can
-  read them from VM1's local Kuksa.
-* Writes made by the EV Range Extender app on VM1 (the prototype
-  from `playground.digital.auto`) flow VM1 → VM2 so the HVAC ECU
-  and Seat Control Module on VM2 emit an `ACT` log line and forward
-  the resulting status to the dashboard's on-screen indicators.
+Only cabin actuator signals are bridged:
 
-Battery state and the computed `Vehicle.Powertrain.Range` are
-**not** bridged. Nothing on VM2 consumes them today, and the EV
-Range Extender app on VM1 already owns those paths on its local
-Kuksa — bridging them would just add log noise. If you ever need
-to surface them on VM2, add the signal entries back to the two
-JSON configs (the bridge code itself is unchanged).
+| VSS path | Type | Unit | Direction |
+|---|---|---|---|
+| `Vehicle.Cabin.HVAC.AmbientAirTemperature` | float | percent | bidirectional |
+| `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` | int | percent | bidirectional |
+| `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` | int | percent | bidirectional |
 
-> **Why a project-local implementation instead of upstream
-> [`zenoh-kuksa-provider`](https://github.com/eclipse-kuksa/kuksa-incubation/tree/main/zenoh-kuksa-provider)?**
-> The upstream provider is built for the device-side actuator pattern
-> (Kuksa side: `subscribe_target_values`; Zenoh side: only consumes
-> samples whose attachment is `"currentValue"`). Two instances on two
-> Databrokers therefore *do not* mirror current values to each other,
-> which is exactly what the cabin pipeline needs. `kuksa-bridge` is a
-> small, config-driven Python service that does mirror current values.
+Battery signals and `Vehicle.Powertrain.Range` stay on VM1 and are not bridged.
 
-`kuksa-bridge` is now the primary bridge for VSS synchronization between VMs,
-running on Zenoh port `7448`. Legacy components (`zenoh_publisher.py` and
-`zenoh_client.py`) have been removed.
+---
 
-## What it does
+## Runtime shape
 
-```
-   VM1 ev-range Kuksa Databroker  (127.0.0.1:55555)
-      ^   |
-      |   | EV Range Extender app writes  (VM1 -> VM2 direction)
-      |   v
-      |   cabin : BIDIRECTIONAL on VM1
-      |
-      |       VM1 kuksa-bridge
-      |       listen tcp/0.0.0.0:7448
-      |                |
-      |                v   one Zenoh peer
-      |          eclipse-zenoh   <----- bidirectional ----->     VM2 kuksa-bridge
-      |                                                          connect tcp/192.168.100.10:7448
-      |                |                                                         |
-      |                v   key prefix: kuksa-bridge/...                          v
-      |          cabin : BIDIRECTIONAL on VM1                    cabin : BIDIRECTIONAL on VM2
-      v                                                                         |
-   VM1 Kuksa accepts cabin writes from VM2 (dashboard path)                     v
-                                                              VM2 local Kuksa Databroker
-                                                                  (127.0.0.1:55555)
-                                                                  ^
-                                                                  | hvac_ecu / seat_ecu write cabin
-                                                                  | (from host PyTk dashboard)
-                                                                  |
-                                                              host PyTk dashboard
+```text
+VM1                                             VM2
+192.168.100.10                                 192.168.100.11
+
+Kuksa Databroker :55555
+    ^
+    | inbound writes
+    |
+kuksa_bridge.py
+  listen tcp/0.0.0.0:7448  <---- Zenoh peer ---->  kuksa_bridge.py
+                                                     relay_only=true
+                                                     listen tcp/0.0.0.0:7448
+                                                     connect tcp/192.168.100.10:7448
+                                                           ^
+                                                           |
+                                      hvac_ecu.py / seat_ecu.py
+                                      publish and consume bridge envelopes
 ```
 
-The bridged signals:
+VM1 is the only side that writes incoming bridge samples into Kuksa. VM2 is a
+stateless relay for its local ECUs and for VM1-originated cabin commands.
 
-| VSS path | Type | VM1 role | VM2 role | Effective flow |
-|---|---|---|---|---|
-| `Vehicle.Cabin.HVAC.AmbientAirTemperature` | float | `bidirectional` | `bidirectional` | both ways |
-| `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` | int | `bidirectional` | `bidirectional` | both ways |
-| `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` | int | `bidirectional` | `bidirectional` | both ways |
+---
 
-Wire envelope (per Zenoh sample):
+## Wire envelope
+
+Each Zenoh sample uses the configured key prefix plus the VSS path converted to
+slashes, for example:
+
+```text
+kuksa-bridge/Vehicle/Cabin/HVAC/AmbientAirTemperature
+```
+
+Payload:
 
 ```json
 {
   "path": "Vehicle.Cabin.HVAC.AmbientAirTemperature",
   "value": 50.0,
   "unit": "percent",
-  "timestamp": "2026-...Z",
+  "timestamp": "2026-05-21T...Z",
   "source": "vm2"
 }
 ```
 
-The `source` field is what makes the bridge safe to run with every
-signal `bidirectional`: each peer drops samples it sees whose
-`source` equals its own `source_label`, so it cannot echo its own
-writes back into Kuksa. A second line of defence — the receiver-side
-`last_sent` dedup cache inside `_inbound_consumer` — also suppresses
-the single-round echo that would otherwise come back from the peer.
+The `source` field prevents echo loops. A bridge instance drops samples that
+already carry its own `source_label`, and the inbound side also deduplicates
+recent values.
 
-## Files
+---
 
-| Path | Purpose |
+## Config files
+
+| File | Role |
 |---|---|
-| `kuksa_bridge.py` | The bridge itself. One process can run any combination of inbound / outbound / bidirectional roles; the per-signal direction is set in the config. |
-| `bridge-config-vm1.json` | VM1: 3 cabin signals, all bidirectional. Listens on `tcp/0.0.0.0:7448`. |
-| `bridge-config-vm2.json` | VM2: 3 cabin signals, all bidirectional. Dials `tcp/192.168.100.10:7448`. |
-| `README.md` | This file. |
+| `bridge-config-vm1.json` | VM1 bridge. Connects to Kuksa at `127.0.0.1:55555`, listens on `tcp/0.0.0.0:7448`, and writes inbound cabin values to VM1. |
+| `bridge-config-vm2.json` | VM2 relay. Uses `relay_only=true`, listens locally on `tcp/0.0.0.0:7448`, and dials VM1 at `tcp/192.168.100.10:7448`. |
 
-## Per-signal direction reference
+Important config fields:
 
-| `direction` | What it means for *this* VM |
+| Field | Meaning |
 |---|---|
-| `outbound` | This VM is the source of truth: subscribe to current values on the local Kuksa, publish every change to Zenoh. |
-| `inbound` | This VM is a mirror: subscribe to Zenoh, write incoming current values to the local Kuksa (with type coercion). |
-| `bidirectional` | Both. Echo prevention via the `source` tag in the envelope + the `last_sent` dedup cache inside `_inbound_consumer`. |
+| `kuksa.host` / `kuksa.port` | Kuksa target for non-relay mode. Used by VM1. |
+| `relay_only` | Keeps a Zenoh relay session without opening a Kuksa client. Used by VM2. |
+| `diagnostic_log` | Logs observed bridge samples without republishing them. |
+| `zenoh.listen` | Endpoints this instance opens for peers. |
+| `zenoh.connect` | Endpoints this instance dials. |
+| `key_prefix` | Prefix for bridge sample keys. |
+| `source_label` | Source tag inserted into outbound envelopes. |
+| `signals[].direction` | `outbound`, `inbound`, or `bidirectional`. |
 
-## Running it
+---
 
-The cloud-init pipeline auto-deploys this folder to each VM under
-`/home/ubuntu/kuksa-bridge/` and starts it via the
-`ev-range-kuksa-bridge.service` systemd unit on every boot — same
-pattern as every other ECU service. **You should not need to start
-anything by hand.**
+## Systemd deployment
 
-If you're iterating on the bridge by hand:
+The QEMU cloud-init composer installs the bridge on both VMs under:
+
+```text
+/home/ubuntu/kuksa-bridge/
+```
+
+It starts through:
+
+```text
+ev-range-kuksa-bridge.service
+```
+
+Logs are written to:
+
+```text
+/tmp/ev-range-kuksa-bridge.log
+```
+
+---
+
+## Manual run
+
+Stop the systemd unit first:
 
 ```bash
-# Inside VM1
 sudo systemctl stop ev-range-kuksa-bridge
+```
+
+Run on VM1:
+
+```bash
 cd /home/ubuntu/kuksa-bridge
 python3 kuksa_bridge.py --config bridge-config.json
 ```
 
+Run on VM2:
+
 ```bash
-# Inside VM2
-sudo systemctl stop ev-range-kuksa-bridge
 cd /home/ubuntu/kuksa-bridge
 python3 kuksa_bridge.py --config bridge-config.json
 ```
 
-Validate-only mode is handy when editing configs:
+Validate a config without opening Kuksa or Zenoh:
 
 ```bash
 python3 kuksa_bridge.py --config bridge-config-vm1.json --validate-config
+python3 kuksa_bridge.py --config bridge-config-vm2.json --validate-config
 ```
 
-It parses the JSON, prints the resulting role / signal table, and
-exits without touching Kuksa or Zenoh.
+---
 
-## Side-by-side with the legacy bridge
+## Verify
 
-| Bridge | VM1 unit | VM2 unit | Zenoh port | Direction |
-|---|---|---|---|---|
-| `kuksa-bridge` (this folder) | `ev-range-kuksa-bridge.service` | `ev-range-kuksa-bridge.service` | `7448` | Two-way: 3 cabin signals VM2 ↔ VM1 |
-
-## Watch the new bridge live
-
-VM1:
+Tail both bridge logs:
 
 ```bash
 ssh ubuntu@192.168.100.10 'tail -f /tmp/ev-range-kuksa-bridge.log'
-# expect lines like:
-# OUT  1 key(s) -> zenoh: Vehicle.Cabin.HVAC.AmbientAirTemperature=0.0 (NNNB)
-#       ^ EV Range Extender app wrote a new value on VM1's Kuksa
-# IN   Vehicle.Cabin.HVAC.AmbientAirTemperature = 50.0 (from vm2)
-#       ^ dashboard slider movement reached VM1 via the bridge
-```
-
-VM2:
-
-```bash
 ssh ubuntu@192.168.100.11 'tail -f /tmp/ev-range-kuksa-bridge.log'
-# expect lines like:
-# OUT  1 key(s) -> zenoh: Vehicle.Cabin.HVAC.AmbientAirTemperature=50.0 (NNNB)
-#       ^ dashboard slider movement; VM2 publishes outward
-# IN   Vehicle.Cabin.HVAC.AmbientAirTemperature = 0.0 (from vm1)
-#       ^ EV Range Extender app's write landed on VM2's Kuksa
 ```
 
-The `IN ... (from vm1)` line on VM2 is the closed-loop EV-app →
-HVAC-ECU path. It also fires the matching `ACT` log line in
-`/tmp/ev-range-hvac.log` and updates the dashboard's HVAC indicator.
+Expected log patterns:
 
-You can also confirm the latest cabin values landed in VM2's Kuksa:
-
-```bash
-ssh ubuntu@192.168.100.11 \
-  'docker run --rm --network host ghcr.io/eclipse-kuksa/kuksa-databroker-cli:main \
-     get Vehicle.Cabin.HVAC.AmbientAirTemperature \
-         Vehicle.Cabin.Seat.Row1.DriverSide.Heating \
-         Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling'
+```text
+OUT ... Vehicle.Cabin.HVAC.AmbientAirTemperature=50.0
+IN  Vehicle.Cabin.HVAC.AmbientAirTemperature = 50.0 (from vm2)
+ACT Vehicle.Cabin.Seat.Row1.DriverSide.Heating = 100 -> dashboard seat.heating
 ```
 
-## Once the new bridge is trusted
-
-✅ **Phase B complete:** Legacy components removed.
-
-1. ✅ Disabled + removed `ev-range-zenoh-publisher.service` and
-   `ev-range-zenoh-client.service`.
-2. ✅ Deleted `ev-range-extender/vm1/zenoh_client.py` and
-   `ev-range-extender/vm2/zenoh_publisher.py` from cloud-init.
-3. ✅ Architecture now points at `kuksa-bridge/` as the only Zenoh-based bridge.
-
-The bridge is the primary mechanism for bidirectional VSS synchronization.
-```
-
-Then move sliders on the dashboard and check that
-`tail -f /tmp/ev-range-kuksa-bridge.log` on VM1 still sees `IN ...`
-lines for the cabin signals — that confirms the new bridge alone is
-carrying them.
+`OUT` means this side published a bridge envelope. `IN` means VM1 wrote an
+incoming value to Kuksa. `ACT` means a VM2 ECU observed an inbound bridge value
+and forwarded status to the dashboard.

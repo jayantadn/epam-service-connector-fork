@@ -1,98 +1,167 @@
-# EV Range Extender — VM1 (HPC) components
+# EV Range Extender VM1 Services
 
-VM1 hosts the digital.auto **SDV Runtime** (`ev-range` Kuksa
-Databroker on `127.0.0.1:55555`) plus three Python services that
-auto-start on every boot via systemd. **You do not run anything on
-VM1 by hand during the demo.**
+VM1 is the HPC side of the QEMU setup. It runs the SDV Runtime container, the
+Kuksa Databroker, and the VM1 application services that collect battery values
+and compute estimated driving range.
 
-| Component | File | systemd unit | Role |
-|---|---|---|---|
-| Battery Monitoring System | `bms.py` | `ev-range-bms.service` | Subscribes to host PyTk Zenoh keys (`sim/battery/*`) on `tcp/0.0.0.0:7460` and writes the values into VM1's Kuksa under `Vehicle.Powertrain.TractionBattery.*`. |
-| Range Compute AI | `range_ai.py` | `ev-range-range-ai.service` | Subscribes to 3 battery + 3 cabin signals on VM1's Kuksa, computes range, publishes `Vehicle.Powertrain.Range`. |
+VM1 address in the default setup:
 
-## VSS signals on VM1's Kuksa
+```text
+192.168.100.10
+```
 
-VM1's Kuksa Databroker is the single source of truth for the demo —
-every signal is collected here and `range_ai.py` reads them all from
-this one broker.
+---
 
-| VSS path | Type | Where it comes from |
+## Services
+
+| Service | File | Purpose |
 |---|---|---|
-| `Vehicle.Powertrain.TractionBattery.CurrentVoltage` | float (V) | host PyTk dashboard → Zenoh → `bms.py` |
-| `Vehicle.Powertrain.TractionBattery.CurrentCurrent` | float (A) | host PyTk dashboard → Zenoh → `bms.py` |
-| `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` | float (%) | host PyTk dashboard → Zenoh → `bms.py` |
-| `Vehicle.Cabin.HVAC.AmbientAirTemperature` | float | host (Fan Speed slider) → `hvac_ecu.py` (VM2) → kuksa-bridge → VM1's Kuksa |
-| `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` | int (% 0..100) | host (Seat Heating toggle) → `seat_ecu.py` (VM2) → kuksa-bridge → VM1's Kuksa |
-| `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` | int (% -100..100) | host (Seat Cooling toggle) → `seat_ecu.py` (VM2) → kuksa-bridge → VM1's Kuksa |
-| `Vehicle.Powertrain.Range` | uint32 (km) | written by `range_ai.py` |
+| `ev-range-bms.service` | `bms.py` | Receives battery telemetry from the host dashboard over Zenoh and writes it to VM1 Kuksa. |
+| `ev-range-range-ai.service` | `range_ai.py` | Reads battery and cabin signals from VM1 Kuksa, computes range, and writes `Vehicle.Powertrain.Range`. |
+| `ev-range-kuksa-bridge.service` | `../../kuksa-bridge/kuksa_bridge.py` | Mirrors selected cabin VSS values between VM1 Kuksa and the VM2 bridge relay. |
 
-> **Signal note for the dashboard's "Fan Speed" slider.** The slider
-> publishes 0..100, which lands at
-> `Vehicle.Cabin.HVAC.AmbientAirTemperature`. The six input VSS paths
-> stay exactly as the original signal catalogue defines them; only the
-> *interpretation* of that value is decided by `range_ai.py` (it
-> treats it as fan-speed percent for the demo, so a higher value adds
-> HVAC cabin load and reduces Range).
+The QEMU cloud-init setup deploys these services automatically. You normally
+inspect or restart them through systemd instead of running scripts by hand.
 
-## Range model (`range_ai.py`)
+---
 
-```
-available_kWh   = (SoC / 100) * 75 kWh
-consumption     = 0.18 kWh/km
-                  * load_factor              (if instantaneous power > 18 kW)
-                  + cabin_load_kW / 60 km/h  (HVAC fan + seat heater + ventilation)
-range_km        = available_kWh / consumption
+## BMS input path
+
+`bms.py` listens for host dashboard samples on:
+
+```text
+tcp/0.0.0.0:7460
 ```
 
-`load_factor = power_kW / 18` whenever `|U·I| / 1000` exceeds the
-18 kW cruise threshold (i.e. roughly above `~48 A` at `380 V`).
+It subscribes to:
 
-`cabin_load_kW` is additive:
+| Zenoh key | VSS path | Type |
+|---|---|---|
+| `sim/battery/voltage` | `Vehicle.Powertrain.TractionBattery.CurrentVoltage` | float |
+| `sim/battery/current` | `Vehicle.Powertrain.TractionBattery.CurrentCurrent` | float |
+| `sim/battery/soc` | `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` | float |
 
+Payload format:
+
+```json
+{
+  "value": 80,
+  "source": "host-name",
+  "ts": "2026-05-21T...Z"
+}
 ```
-cabin_load_kW = 2.0 * (FanSpeed / 100)                  # 0..2 kW HVAC fan
-              + 2.0 * (Seat.Heating / 100)              # 0..2 kW seat heater
-              + 2.0 * (Seat.HeatingCooling / 100)       # 0..2 kW   if HC > 0
-              + 0.5 * (-Seat.HeatingCooling / 100)      # 0..0.5 kW if HC < 0
+
+---
+
+## Range computation
+
+`range_ai.py` subscribes to six input signals from VM1 Kuksa:
+
+| VSS path | Source |
+|---|---|
+| `Vehicle.Powertrain.TractionBattery.CurrentVoltage` | VM1 `bms.py` |
+| `Vehicle.Powertrain.TractionBattery.CurrentCurrent` | VM1 `bms.py` |
+| `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` | VM1 `bms.py` |
+| `Vehicle.Cabin.HVAC.AmbientAirTemperature` | VM2 HVAC path mirrored by `kuksa-bridge` |
+| `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` | VM2 seat path mirrored by `kuksa-bridge` |
+| `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` | VM2 seat path mirrored by `kuksa-bridge` |
+
+It writes:
+
+```text
+Vehicle.Powertrain.Range
 ```
 
-The dashboard's mutex makes Heating and HeatingCooling
-mutually-exclusive in practice, so the seat terms can't double-count
-when the GUI drives them.
+Model summary:
 
-Tweak the constants at the top of `range_ai.py`
-(`BATTERY_CAPACITY_KWH`, `NOMINAL_CONSUMPTION_KWH_PER_KM`,
-`NOMINAL_CRUISE_POWER_KW`, `HVAC_FAN_FULL_KW`, `SEAT_HEATER_FULL_KW`,
-`SEAT_VENT_FULL_KW`, `AVG_SPEED_KMH`) to model a different vehicle.
+```text
+available_kWh = (SoC / 100) * 75
+base_consumption = 0.18 kWh/km
+range_km = available_kWh / effective_consumption
+```
 
-## Inspect / debug
+Effective consumption increases when traction power exceeds the nominal cruise
+threshold and when HVAC or seat loads are active.
 
-All three services log to `/tmp/ev-range-*.log` (world-readable, no
-sudo needed):
+The constants live near the top of `range_ai.py`:
+
+| Constant | Meaning |
+|---|---|
+| `BATTERY_CAPACITY_KWH` | Battery capacity used for range estimation. |
+| `NOMINAL_CONSUMPTION_KWH_PER_KM` | Base vehicle consumption. |
+| `NOMINAL_CRUISE_POWER_KW` | Power threshold before acceleration penalty applies. |
+| `HVAC_FAN_FULL_KW` | Full-scale HVAC load. |
+| `SEAT_HEATER_FULL_KW` | Full-scale seat heating load. |
+| `SEAT_VENT_FULL_KW` | Full-scale seat cooling load. |
+| `AVG_SPEED_KMH` | Speed used to convert cabin kW into kWh/km. |
+
+---
+
+## Inspect
+
+Check service status on VM1:
+
+```bash
+systemctl status ev-range-bms ev-range-range-ai ev-range-kuksa-bridge
+```
+
+Tail logs:
 
 ```bash
 tail -f /tmp/ev-range-bms.log
 tail -f /tmp/ev-range-range-ai.log
-tail -f /tmp/ev-range-zenoh-client.log
+tail -f /tmp/ev-range-kuksa-bridge.log
+tail -f /tmp/evrange-runtime.log
 ```
 
-Status / restart:
+Restart services:
 
 ```bash
-systemctl status   ev-range-bms ev-range-range-ai ev-range-zenoh-client
-sudo systemctl restart ev-range-range-ai
+sudo systemctl restart ev-range-bms ev-range-range-ai ev-range-kuksa-bridge
 ```
 
-To run any of them by hand (with the systemd unit stopped first):
+---
+
+## Manual run
+
+Stop the systemd unit before running a service directly:
 
 ```bash
 sudo systemctl stop ev-range-bms
 cd /home/ubuntu/ev-range-extender/vm1
-python3 bms.py            # all flags have working defaults
+python3 bms.py
 ```
+
+Run the range service manually:
+
+```bash
+sudo systemctl stop ev-range-range-ai
+cd /home/ubuntu/ev-range-extender/vm1
+python3 range_ai.py
+```
+
+Both scripts default to VM1's local Kuksa Databroker at
+`127.0.0.1:55555`.
+
+---
 
 ## Troubleshooting
 
-See the top-level [`README.md`](../../README.md) "Troubleshooting"
-section for the common cases (cloud-init hang, tap busy, service
-inactive, dashboard slider with no effect, etc.).
+If `range_ai.py` waits for output, confirm State of Charge has been written by
+`bms.py`:
+
+```bash
+tail -f /tmp/ev-range-bms.log
+```
+
+If cabin inputs do not change on VM1, inspect the bridge:
+
+```bash
+tail -f /tmp/ev-range-kuksa-bridge.log
+```
+
+If the Databroker is not responding, inspect the SDV Runtime startup log:
+
+```bash
+tail -f /tmp/evrange-runtime.log
+```
