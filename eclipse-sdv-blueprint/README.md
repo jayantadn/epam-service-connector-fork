@@ -144,28 +144,6 @@ docker run -d \
 > `RUNTIME_NAME` is the identifier you'll use to register this runtime on the playground.
 > VM2 does not run an additional digital.auto runtime; it only runs the cabin ECUs and the stateless Zenoh relay.
 
-### Hardware simulator
-
-The hardware simulator is the host-side control dashboard for Phase 1. It
-replaces physical battery, HVAC, and seat inputs with a Tk-based UI, then
-publishes those values over Eclipse Zenoh to the ECUs running inside the QEMU
-VMs.
-
-Use it after the automated VM setup has completed and both VMs are running. The
-dashboard sends battery values to VM1 and cabin controls to VM2; the VM services
-then write or bridge those signals so the EV Range Extender app can recompute
-range.
-
-```bash
-	./hardware-sim/setup.sh
-	pip install -r hardware-sim/requirements.txt
-	python hardware-sim/pytk_dashboard.py
-```
-
-For the signal map, dashboard controls, reverse status indicators, and
-troubleshooting steps, see the dedicated
-[hardware simulator README](hardware-sim/README.md).
-
 ### Application Execution
 
 **Register your runtime on the Playground**
@@ -183,6 +161,53 @@ troubleshooting steps, see the dedicated
 2. Select the runtime you just registered
 3. Click **Execute** — vehicle signals will start flowing in real time
 
+### What the prototype does
+
+The EV Range Extender prototype is the application logic that implements the customer journey described above. Once executed against your registered runtime, it:
+
+- Continuously reads `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` from the BMS on VM1
+- Compares it against a configured low-charge threshold
+- When the threshold is crossed, automatically writes new target values to the cabin signals:
+	- `Vehicle.Cabin.HVAC.AmbientAirTemperature` (HVAC eases off)
+	- `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` (seat heating off)
+	- `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` (seat heating/cooling off)
+- Reports the recomputed driving range and the "Power Saving Mode" status back to the runtime
+
+The Kuksa bridge then propagates the cabin writes from VM1 to VM2 over Zenoh, where `hvac_ecu.py` and `seat_ecu.py` apply them to the simulated actuators.
+
+### Start the hardware simulator
+
+With both VMs running and the EV Range Extender application executed from the digital.auto playground against your registered runtime, launch the host-side hardware simulator (the Tk dashboard) so you can drive the inputs manually:
+
+```bash
+./hardware-sim/setup.sh
+pip install -r hardware-sim/requirements.txt
+python hardware-sim/pytk_dashboard.py
+```
+
+See the [hardware simulator README](hardware-sim/README.md) for the full control and status map.
+
+### Signal flow and hardware simulator updates you should notice
+
+As you interact with the hardware simulator dashboard while the playground application is running, the following end-to-end flow becomes visible:
+
+1. **Drop the Battery %** (or click **Start** to drain it automatically)
+	- The hardware simulator publishes `sim/battery/soc` over Zenoh → VM1 `bms.py` updates `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` in Kuksa
+	- The prototype, running on the digital.auto runtime, sees the SoC fall below the threshold
+2. **Power-saving mode activates automatically**
+	- The prototype writes new HVAC and seat target values into Kuksa on VM1
+	- `kuksa-bridge` forwards those writes from VM1 to VM2 over Zenoh
+	- VM2's `hvac_ecu.py` and `seat_ecu.py` apply the new values and publish reverse status on `dash/status/hvac` and `dash/status/seat`
+3. **The hardware simulator reflects the system response**
+	- The HVAC Fan indicator transitions to its eased-off state
+	- The Seat Heating / Cooling indicator turns off, even though you did not move those controls yourself
+	- The range value computed by `range_ai.py` on VM1 increases, showing the extended driving range
+4. **Move HVAC or Seat controls manually**
+	- Local publishes from the hardware simulator reach the VM2 ECUs directly, and the same reverse status channel updates the indicators — confirming the bidirectional path is live
+
+If an indicator does not change, tail the VM service logs as described in the [hardware simulator README](hardware-sim/README.md#verify) to confirm where the signal stops.
+
+![Hardware simulator in action](./images/demo.gif)
 
 ---
 

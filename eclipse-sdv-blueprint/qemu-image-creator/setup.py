@@ -74,10 +74,61 @@ def write_meta(path: Path, vm_name: str, run_token: str) -> None:
     )
 
 
+def _check_existing_qemu() -> int:
+    """Detect leftover QEMU / TAP state from a previous run.
+
+    The VM launch scripts use `set -e` and -daemonize; if an old
+    digital.auto / QEMU instance is still running or tap1/tap2/br0 are
+    still attached, the second launch fails with a confusing error.
+    Surface that here and ask the user to clean up and re-run setup
+    instead of partially launching a broken environment.
+    """
+    qemu_pids: list[str] = []
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "qemu-system-x86_64"],
+            capture_output=True, text=True, check=False,
+        )
+        if result.returncode == 0:
+            qemu_pids = [p for p in result.stdout.split() if p.strip()]
+    except FileNotFoundError:
+        pass
+
+    stale_links = [
+        name for name in ("tap1", "tap2")
+        if Path(f"/sys/class/net/{name}").exists()
+    ]
+
+    if not qemu_pids and not stale_links:
+        return 0
+
+    print(BANNER_WIDE)
+    print("[ERROR] A previous digital.auto / QEMU instance is still running.")
+    print(BANNER_WIDE)
+    if qemu_pids:
+        print(f"  Running qemu-system-x86_64 PIDs: {' '.join(qemu_pids)}")
+    if stale_links:
+        print(f"  Leftover network interfaces: {' '.join(stale_links)}")
+    print()
+    print(" Please kill the running VMs and re-run this setup.")
+    print()
+    print(" TAP network cleanup commands:")
+    print("   sudo ip link delete tap1")
+    print("   sudo ip link delete tap2")
+    print("   sudo ip link delete br0")
+    print()
+    return 1
+
+
 def main() -> int:
     print(BANNER_THIN)
     print("[INFO] MULTI-VM SETUP STARTED")
     print(BANNER_THIN)
+
+    # -------- PREFLIGHT: existing QEMU / TAP state --------
+    rc = _check_existing_qemu()
+    if rc != 0:
+        return rc
 
     # -------- CHECK INPUT FILES --------
     if not (INPUT_DIR / "user-data-vm1").is_file() \

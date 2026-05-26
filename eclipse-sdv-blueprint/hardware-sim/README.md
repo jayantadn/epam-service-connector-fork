@@ -100,16 +100,6 @@ Defaults match the QEMU VM setup:
 | HVAC port | `7461` |
 | Seat port | `7462` |
 
-Override them when needed:
-
-```bash
-python3 pytk_dashboard.py \
-    --vm1 192.168.100.10 \
-    --vm2 192.168.100.11 \
-    --bms-port 7460 \
-    --hvac-port 7461 \
-    --seat-port 7462
-```
 
 ---
 

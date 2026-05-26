@@ -89,7 +89,7 @@ SEAT_SIGNALS = (
         0,
         100,
         1,
-        100,
+        0,
         is_int=True,
         is_toggle=True,
         on_value=100,
@@ -103,7 +103,7 @@ SEAT_SIGNALS = (
         -100,
         0,
         1,
-        0,
+        -100,
         is_int=True,
         is_toggle=True,
         on_value=-100,
@@ -537,6 +537,7 @@ class Dashboard:
     _STARTUP_INITIAL_PUBLISH_DELAY_MS = 1000
     _STARTUP_SYNC_INTERVAL_MS = 1000
     _STARTUP_SYNC_MAX_RETRIES = 20
+    _STARTUP_REPLAY_TICKS = 8
 
     _DRAIN_TICK_MS = 1000
     _SOC_DRAIN_PER_TICK = 1.0
@@ -552,6 +553,12 @@ class Dashboard:
 
         self._startup_sync_after_id: Optional[str] = None
         self._startup_sync_retries_left = self._STARTUP_SYNC_MAX_RETRIES
+        self._startup_replay_ticks_left = self._STARTUP_REPLAY_TICKS
+        self._startup_replay_keys: tuple[str, ...] = (
+            "sim/battery/voltage",
+            "sim/battery/current",
+            "sim/battery/soc",
+        )
         self._startup_vm2_pending: set[str] = {
             "sim/cabin/temp",
             "sim/cabin/seat/heating",
@@ -615,10 +622,17 @@ class Dashboard:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _publish_startup_defaults(self) -> None:
+        # Make startup transfer explicit in logs to simplify bring-up debugging.
+        logger.info("STARTUP_DEFAULTS: publishing initial control values")
         for row in self._rows_by_key.values():
             sig = row.sig
             value = sig.on_value if sig.is_toggle and row.is_on() else row._float
+            logger.info(f"STARTUP_DEFAULTS: {sig.key} -> {value}")
             self._publish(sig, value, inhibit_reverse=False)
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.status_var.set(
+            f"[{ts}] Startup publish: sim/cabin/temp=30, sim/cabin/seat/heating=0, sim/cabin/seat/hc=-100"
+        )
 
     def _publish_row_default(self, key: str) -> None:
         row = self._rows_by_key.get(key)
@@ -630,22 +644,35 @@ class Dashboard:
 
     def _startup_sync_tick(self) -> None:
         self._startup_sync_after_id = None
-        if not self._startup_vm2_pending:
+        replay_active = self._startup_replay_ticks_left > 0
+        pending_active = bool(self._startup_vm2_pending)
+        if not pending_active and not replay_active:
             return
-        if self._startup_sync_retries_left <= 0:
+        if pending_active and self._startup_sync_retries_left <= 0:
             ts = datetime.now().strftime("%H:%M:%S")
             pending = ", ".join(sorted(self._startup_vm2_pending))
             self.status_var.set(f"[{ts}] WARN startup sync pending for: {pending}")
-            return
+            pending_active = False
 
-        for key in sorted(self._startup_vm2_pending):
-            self._publish_row_default(key)
+        if pending_active:
+            for key in sorted(self._startup_vm2_pending):
+                self._publish_row_default(key)
 
-        self._startup_sync_retries_left -= 1
-        self._startup_sync_after_id = self.root.after(
-            self._STARTUP_SYNC_INTERVAL_MS,
-            self._startup_sync_tick,
-        )
+        # Replay battery startup values for a short window so late subscribers
+        # (runtime/playground path) still receive initial HW state.
+        if replay_active:
+            for key in self._startup_replay_keys:
+                self._publish_row_default(key)
+            self._startup_replay_ticks_left -= 1
+
+        if pending_active:
+            self._startup_sync_retries_left -= 1
+
+        if self._startup_vm2_pending or self._startup_replay_ticks_left > 0:
+            self._startup_sync_after_id = self.root.after(
+                self._STARTUP_SYNC_INTERVAL_MS,
+                self._startup_sync_tick,
+            )
 
     def _on_hvac_reverse(self, key: str, msg: dict) -> None:
         logger.info(f"HVAC_REVERSE: received {msg}")
