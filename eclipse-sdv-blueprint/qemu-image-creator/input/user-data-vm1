@@ -30,7 +30,7 @@ packages:
 write_files:
   # Force password SSH login on. Highest-numbered drop-in wins over
   # any default cloud-image overrides (e.g. 60-cloudimg-settings.conf).
-  - path: /etc/ssh/sshd_config.d/99-xmel-pwauth.conf
+  - path: /etc/ssh/sshd_config.d/99-evrange-pwauth.conf
     permissions: '0644'
     owner: root:root
     content: |
@@ -39,18 +39,18 @@ write_files:
       PermitRootLogin no
 
   # Robust SDV Runtime startup script with retries, health checks and dedicated log file.
-  # Re-runnable manually: sudo /usr/local/bin/xmel-start-runtime
-  - path: /usr/local/bin/xmel-start-runtime
+  # Re-runnable manually: sudo /usr/local/bin/evrange-start-runtime
+  - path: /usr/local/bin/evrange-start-runtime
     permissions: '0755'
     owner: root:root
     content: |
       #!/usr/bin/env bash
-      # XMEL SDV Runtime startup helper.
+      # EV Range Extender SDV Runtime startup helper.
       # Pulls and starts the digital.auto SDV Runtime (Kuksa Databroker + cloud sync)
       # with retries and a health check on the gRPC port.
       set -uo pipefail
 
-      LOG_FILE="/tmp/xmel-runtime.log"
+      LOG_FILE="/tmp/evrange-runtime.log"
       CONTAINER="sdv-runtime"
       IMAGE="ghcr.io/eclipse-autowrx/sdv-runtime:latest"
       RUNTIME_NAME="${RUNTIME_NAME:-ev-range}"
@@ -158,14 +158,14 @@ write_files:
       main() {
           : > "$LOG_FILE" 2>/dev/null || true
           log "============================================================"
-          log "             XMEL SDV Runtime Startup (VM1)"
+          log "        EV Range Extender SDV Runtime Startup (VM1)"
           log "============================================================"
           log "Image          : $IMAGE"
           log "Container name : $CONTAINER"
           log "Runtime name   : $RUNTIME_NAME"
           log "Databroker port: $DATABROKER_PORT"
           log "Log file       : $LOG_FILE"
-          log "Re-run         : sudo /usr/local/bin/xmel-start-runtime"
+          log "Re-run         : sudo /usr/local/bin/evrange-start-runtime"
           log "============================================================"
 
           ensure_docker
@@ -182,7 +182,7 @@ write_files:
           fi
           if ! wait_for_databroker; then
               log "Health check failed - container is up but databroker is not responding"
-              log "Try: sudo /usr/local/bin/xmel-start-runtime  (will recreate the container)"
+              log "Try: sudo /usr/local/bin/evrange-start-runtime  (will recreate the container)"
               exit 4
           fi
 
@@ -201,17 +201,22 @@ runcmd:
   # Make sure sshd picks up the password-auth drop-in written above.
   - systemctl restart ssh
 
-  # Install Python packages required by xmel-client and Python apps.
+  # Install Python packages required by the EV Range Extender Python apps.
+  #   - kuksa-client==0.5.1: VM apps import Datapoint from kuksa_client.grpc
+  #     and require the 0.5.x API shape.
+  #   - someipy (>=1.0,<2.0): someip-demo/ + ev-range-extender/vm1/someip_client.py (active SOME/IP / Eclipse-SCore path)
+  #   - grpcio + grpcio-tools: grpc-demo/
   - |
-    pip3 install --break-system-packages --ignore-installed kuksa-client grpcio grpcio-tools \
-      eclipse-zenoh pyyaml jsonschema requests packaging \
-      >> /tmp/xmel-pip.log 2>&1 || \
-      echo "WARNING: pip install reported errors, see /tmp/xmel-pip.log" >> /tmp/xmel-pip.log
+    pip3 install --break-system-packages --ignore-installed 'kuksa-client==0.5.1' grpcio grpcio-tools \
+      eclipse-zenoh 'someipy>=1.0,<2.0' pyyaml jsonschema requests packaging \
+      >> /tmp/evrange-pip.log 2>&1 || \
+      echo "WARNING: pip install reported errors, see /tmp/evrange-pip.log" >> /tmp/evrange-pip.log
 
   # Start the SDV Runtime via the helper script. Background with & so cloud-init
   # does not block forever if the network is slow or ghcr.io is throttled.
-  - /usr/local/bin/xmel-start-runtime &
+  - /usr/local/bin/evrange-start-runtime &
 
-  # Create apps directory for xmel-client deployments.
+  # Create a generic apps directory for ad-hoc deployments.
   - mkdir -p /home/ubuntu/apps
   - chown -R ubuntu:ubuntu /home/ubuntu/apps
+ 
