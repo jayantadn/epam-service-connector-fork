@@ -187,27 +187,39 @@ python hardware-sim/pytk_dashboard.py
 
 See the [hardware simulator README](hardware-sim/README.md) for the full control and status map.
 
-### Signal flow and hardware simulator updates you should notice
+### Steps to demo
 
-As you interact with the hardware simulator dashboard while the playground application is running, the following end-to-end flow becomes visible:
+Follow these steps:
 
-1. **Drop the Battery %** (or click **Start** to drain it automatically)
-	- The hardware simulator publishes `sim/battery/soc` over Zenoh → VM1 `bms.py` updates `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` in Kuksa
-	- The prototype, running on the digital.auto runtime, sees the SoC fall below the threshold
-2. **Power-saving mode activates automatically**
-	- The prototype writes new HVAC and seat target values into Kuksa on VM1
-	- `kuksa-bridge` forwards those writes from VM1 to VM2 over Zenoh
-	- VM2's `hvac_ecu.py` and `seat_ecu.py` apply the new values and publish reverse status on `dash/status/hvac` and `dash/status/seat`
-3. **The hardware simulator reflects the system response**
-	- The HVAC Fan indicator transitions to its eased-off state
-	- The Seat Heating / Cooling indicator turns off, even though you did not move those controls yourself
-	- The range value computed by `range_ai.py` on VM1 increases, showing the extended driving range
-4. **Move HVAC or Seat controls manually**
-	- Local publishes from the hardware simulator reach the VM2 ECUs directly, and the same reverse status channel updates the indicators — confirming the bidirectional path is live
-
-If an indicator does not change, tail the VM service logs as described in the [hardware simulator README](hardware-sim/README.md#verify) to confirm where the signal stops.
+1. **Run the hardware simulator.**
+2. **After the hardware simulator is running, execute the playground application (SDV code).**
+3. **Press the Start button in the hardware simulator** to begin battery drain.
+4. **Observe threshold behavior:**
+	- Up to **50% battery**, the HVAC fan is reduced gradually; once the battery reaches **50%**, the fan turns off.
+	- At **30% battery**, stricter power-saving behavior is applied and seat heating/cooling are turned off.
+	- When the fan turns off, a small rise in range can be observed. When seat heating/cooling also turn off, the range increases further.
 
 ![Hardware simulator in action](./images/demo.gif)
+
+### Signal Flow and Internals
+
+The demo runs as a closed loop across host, virtual machines, and the playground runtime.
+
+1. **Hardware simulator (host side)** publishes battery and cabin control values.
+2. **VM1 runtime stack** receives battery values and updates the vehicle signal broker.
+3. **digital.auto playground application** reads battery state from the runtime and applies power-saving decisions based on thresholds.
+4. **Vehicle signal broker (Kuksa)** stores and distributes current vehicle values used by the application and runtime services.
+5. **Bridge layer** transfers cabin-related updates between VM1 and VM2 so both compute domains stay synchronized.
+6. **VM2 ECU services** apply HVAC and seat actions and publish actuator status back to the dashboard.
+7. **Dashboard indicators** reflect the latest actuator state and make the system response visible in real time.
+
+### Software Components Used
+
+1. **digital.auto playground runtime**: executes the SDV application logic.
+2. **Eclipse Kuksa**: provides the vehicle signal broker and real-time signal access.
+3. **Eclipse Zenoh**: provides lightweight pub/sub transport between simulator, bridge, and ECU layers.
+4. **QEMU virtual machines**: emulate HPC and ECU domains in Phase 1.
+5. **Host hardware simulator dashboard**: drives inputs and shows reverse status for validation.
 
 ---
 

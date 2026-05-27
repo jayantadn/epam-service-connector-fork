@@ -78,7 +78,7 @@ BATTERY_SIGNALS = (
 )
 
 HVAC_SIGNALS = (
-    Signal("Fan Speed", "sim/cabin/temp", "%", 0, 100, 1, 30, is_int=True),
+    Signal("Fan Speed", "sim/cabin/temp", "%", 0, 100, 1, 0, is_int=True),
 )
 
 SEAT_SIGNALS = (
@@ -103,7 +103,7 @@ SEAT_SIGNALS = (
         -100,
         0,
         1,
-        -100,
+        0,
         is_int=True,
         is_toggle=True,
         on_value=-100,
@@ -535,6 +535,7 @@ class IndicatorPanel:
 class Dashboard:
     _REVERSE_INHIBIT_SECS = 1.2
     _STARTUP_INITIAL_PUBLISH_DELAY_MS = 1000
+    _AUTO_ACTION_DELAY_MS = 1400
     _STARTUP_SYNC_INTERVAL_MS = 1000
     _STARTUP_SYNC_MAX_RETRIES = 20
     _STARTUP_REPLAY_TICKS = 8
@@ -610,6 +611,7 @@ class Dashboard:
             self.status_var.set(f"[{ts}] WARN reverse subscribe failed: {exc}")
 
         self.root.after(self._STARTUP_INITIAL_PUBLISH_DELAY_MS, self._publish_startup_defaults)
+        self.root.after(self._AUTO_ACTION_DELAY_MS, self._apply_default_user_action)
         self._startup_sync_after_id = self.root.after(
             self._STARTUP_SYNC_INTERVAL_MS,
             self._startup_sync_tick,
@@ -631,7 +633,27 @@ class Dashboard:
             self._publish(sig, value, inhibit_reverse=False)
         ts = datetime.now().strftime("%H:%M:%S")
         self.status_var.set(
-            f"[{ts}] Startup publish: sim/cabin/temp=30, sim/cabin/seat/heating=0, sim/cabin/seat/hc=-100"
+            f"[{ts}] Startup publish defaults: sim/cabin/temp=0, sim/cabin/seat/heating=0, sim/cabin/seat/hc=0"
+        )
+
+    def _apply_default_user_action(self) -> None:
+        """Simulate an initial user action from code after startup defaults.
+
+        Requirement: keep defaults at zero, then set seat cooling ON and
+        fan speed to 30 as if a user changed controls.
+        """
+        fan_row = self._rows_by_key.get("sim/cabin/temp")
+        cool_row = self._rows_by_key.get("sim/cabin/seat/hc")
+        if fan_row is not None:
+            fan_row.set_value_silent(30)
+            self._publish(fan_row.sig, 30)
+        if cool_row is not None and not cool_row.is_on():
+            cool_row.set_toggle_silent(True)
+            self._publish(cool_row.sig, cool_row.sig.on_value)
+
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.status_var.set(
+            f"[{ts}] Auto action applied: fan=30, seat cooling=ON"
         )
 
     def _publish_row_default(self, key: str) -> None:
