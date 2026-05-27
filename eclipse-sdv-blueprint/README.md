@@ -161,20 +161,6 @@ docker run -d \
 2. Select the runtime you just registered
 3. Click **Execute** — vehicle signals will start flowing in real time
 
-### What the prototype does
-
-The EV Range Extender prototype is the application logic that implements the customer journey described above. Once executed against your registered runtime, it:
-
-- Continuously reads `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` from the BMS on VM1
-- Compares it against a configured low-charge threshold
-- When the threshold is crossed, automatically writes new target values to the cabin signals:
-	- `Vehicle.Cabin.HVAC.AmbientAirTemperature` (HVAC eases off)
-	- `Vehicle.Cabin.Seat.Row1.DriverSide.Heating` (seat heating off)
-	- `Vehicle.Cabin.Seat.Row1.DriverSide.HeatingCooling` (seat heating/cooling off)
-- Reports the recomputed driving range and the "Power Saving Mode" status back to the runtime
-
-The Kuksa bridge then propagates the cabin writes from VM1 to VM2 over Zenoh, where `hvac_ecu.py` and `seat_ecu.py` apply them to the simulated actuators.
-
 ### Start the hardware simulator
 
 With both VMs running and the EV Range Extender application executed from the digital.auto playground against your registered runtime, launch the host-side hardware simulator (the Tk dashboard) so you can drive the inputs manually:
@@ -212,14 +198,6 @@ The demo runs as a closed loop across host, virtual machines, and the playground
 5. **Bridge layer** transfers cabin-related updates between VM1 and VM2 so both compute domains stay synchronized.
 6. **VM2 ECU services** apply HVAC and seat actions and publish actuator status back to the dashboard.
 7. **Dashboard indicators** reflect the latest actuator state and make the system response visible in real time.
-
-### Software Components Used
-
-1. **digital.auto playground runtime**: executes the SDV application logic.
-2. **Eclipse Kuksa**: provides the vehicle signal broker and real-time signal access.
-3. **Eclipse Zenoh**: provides lightweight pub/sub transport between simulator, bridge, and ECU layers.
-4. **QEMU virtual machines**: emulate HPC and ECU domains in Phase 1.
-5. **Host hardware simulator dashboard**: drives inputs and shows reverse status for validation.
 
 ---
 
