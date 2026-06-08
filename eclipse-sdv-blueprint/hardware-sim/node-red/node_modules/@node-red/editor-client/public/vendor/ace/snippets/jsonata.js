@@ -1,0 +1,1 @@
+ace.define("ace/snippets/jsonata",["require","exports","module"],function(n,t,e){var a,o="";for(a in jsonata.functions)jsonata.functions.hasOwnProperty(a)&&(o+="# "+a+"\nsnippet "+a+"\n\t"+jsonata.getFunctionSnippet(a)+"\n");t.snippetText=o,t.scope="jsonata"});
