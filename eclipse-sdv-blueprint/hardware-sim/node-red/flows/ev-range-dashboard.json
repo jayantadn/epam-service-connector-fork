@@ -1,0 +1,698 @@
+[
+  {
+    "id": "ev-range-flow",
+    "type": "tab",
+    "label": "EV Range",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "ev-range-ui-base",
+    "type": "ui-base",
+    "name": "EV Dashboard",
+    "path": "/ev-range",
+    "includeClientData": true,
+    "acceptsTheme": true,
+    "showPathInSidebar": false,
+    "navigationStyle": "default",
+    "titleBarStyle": "default"
+  },
+  {
+    "id": "ev-range-ui-theme",
+    "type": "ui-theme",
+    "name": "Dark EV Theme",
+    "colors": {
+      "surface": "#1a1a1a",
+      "primary": "#ff6b35",
+      "bgPage": "#0d0d0d",
+      "groupBg": "#1a1a1a",
+      "groupOutline": "#333333"
+    },
+    "fonts": {
+      "default": "Default",
+      "title": "Default",
+      "monospace": "Default"
+    },
+    "sizes": {
+      "density": "default",
+      "pagePadding": "12px",
+      "groupGap": "12px",
+      "groupBorderRadius": "4px",
+      "widgetGap": "6px"
+    }
+  },
+  {
+    "id": "ev-range-tab",
+    "type": "ui-page",
+    "name": "EV Range Dashboard",
+    "ui": "ev-range-ui-base",
+    "path": "/control",
+    "icon": "home",
+    "layout": "grid",
+    "theme": "ev-range-ui-theme",
+    "order": 1
+  },
+  {
+    "id": "ev-range-group-engine",
+    "type": "ui-group",
+    "name": "Engine",
+    "page": "ev-range-tab",
+    "width": "3",
+    "height": "7",
+    "order": 1,
+    "showTitle": true,
+    "className": "",
+    "visible": "true",
+    "disabled": "false"
+  },
+  {
+    "id": "ev-range-group-fan",
+    "type": "ui-group",
+    "name": "Fan",
+    "page": "ev-range-tab",
+    "width": "3",
+    "height": "7",
+    "order": 2,
+    "showTitle": true,
+    "className": "",
+    "visible": "true",
+    "disabled": "false"
+  },
+  {
+    "id": "ev-range-group-controls",
+    "type": "ui-group",
+    "name": "Controls",
+    "page": "ev-range-tab",
+    "width": "6",
+    "height": "7",
+    "order": 3,
+    "showTitle": true,
+    "className": "",
+    "visible": "true",
+    "disabled": "false"
+  },
+  {
+    "id": "ev-range-group-battery",
+    "type": "ui-group",
+    "name": "Battery",
+    "page": "ev-range-tab",
+    "width": "6",
+    "height": "5",
+    "order": 4,
+    "showTitle": true,
+    "className": "",
+    "visible": "true",
+    "disabled": "false"
+  },
+  {
+    "id": "ev-range-group-status",
+    "type": "ui-group",
+    "name": "ECU Status",
+    "page": "ev-range-tab",
+    "width": "12",
+    "height": "3",
+    "order": 5,
+    "showTitle": true,
+    "className": "",
+    "visible": "true",
+    "disabled": "false"
+  },
+  {
+    "id": "ev-range-drive-button",
+    "type": "ui-template",
+    "z": "ev-range-flow",
+    "group": "ev-range-group-engine",
+    "page": "",
+    "ui": "",
+    "name": "Engine Start/Stop",
+    "order": 1,
+    "width": "3",
+    "height": "6",
+    "format": "<template>\n  <div class=\"engine-btn-wrap\" @click=\"toggle\">\n    <div class=\"engine-btn-outer\" :class=\"{ on: on }\">\n      <div class=\"engine-btn-bezel\">\n        <div class=\"engine-btn-inner\">\n          <div class=\"engine-btn-line line1\">ENGINE</div>\n          <div class=\"engine-btn-line line2\">START</div>\n          <div class=\"engine-btn-line line3\">STOP</div>\n        </div>\n      </div>\n    </div>\n    <div class=\"engine-btn-status\" :class=\"{ on: on }\">{{ on ? 'ENGINE ON' : 'PRESS TO START' }}</div>\n  </div>\n</template>\n<style>\n.engine-btn-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;user-select:none;padding:2px;width:100%;}\n.engine-btn-outer{width:170px;height:170px;min-width:170px;min-height:170px;max-width:170px;max-height:170px;flex:0 0 170px;aspect-ratio:1/1;box-sizing:border-box;border-radius:50%;background:radial-gradient(circle at 50% 35%, #4a4a4a 0%, #1a1a1a 70%);padding:6px;box-shadow:0 6px 14px rgba(0,0,0,0.6), inset 0 -3px 6px rgba(0,0,0,0.5), inset 0 3px 6px rgba(255,255,255,0.08);transition:all 0.2s ease;border:2px solid #b22222;}\n.engine-btn-outer.on{border-color:#27ae60;box-shadow:0 0 30px rgba(39,174,96,0.6), inset 0 -4px 8px rgba(0,0,0,0.5);}\n.engine-btn-outer:active{transform:translateY(2px);box-shadow:0 4px 10px rgba(0,0,0,0.6), inset 0 4px 8px rgba(0,0,0,0.6);}\n.engine-btn-bezel{width:100%;height:100%;box-sizing:border-box;border-radius:50%;background:linear-gradient(145deg,#2b2b2b,#101010);padding:8px;border:1px solid #555;}\n.engine-btn-inner{width:100%;height:100%;box-sizing:border-box;border-radius:50%;background:radial-gradient(circle at 50% 40%, #c0392b 0%, #7a1d12 80%);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;font-family:'Arial Black','Helvetica',sans-serif;text-shadow:0 1px 2px rgba(0,0,0,0.8);box-shadow:inset 0 -6px 12px rgba(0,0,0,0.5), inset 0 6px 12px rgba(255,255,255,0.15);transition:background 0.3s;}\n.engine-btn-outer.on .engine-btn-inner{background:radial-gradient(circle at 50% 40%, #27ae60 0%, #145a32 80%);}\n.engine-btn-line{font-weight:900;letter-spacing:1px;line-height:1.05;}\n.line1{font-size:13px;opacity:0.85;}\n.line2{font-size:22px;}\n.line3{font-size:13px;opacity:0.85;}\n.engine-btn-status{margin-top:6px;font-family:monospace;font-size:13px;font-weight:bold;letter-spacing:1px;color:#888;}\n.engine-btn-status.on{color:#27ae60;}\n</style>\n<script>\nexport default {\n  data(){return {on:false}},\n  watch:{msg(m){if(m&&typeof m.payload==='boolean')this.on=m.payload}},\n  methods:{toggle(){this.on=!this.on;this.send({payload:this.on})}}\n}\n</script>",
+    "storeOutMessages": true,
+    "passthru": false,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "className": "",
+    "x": 120,
+    "y": 100,
+    "wires": [
+      [
+        "ev-range-drive-handle"
+      ]
+    ]
+  },
+  {
+    "id": "ev-range-drive-handle",
+    "type": "function",
+    "z": "ev-range-flow",
+    "name": "Toggle drive",
+    "func": "const on = !!msg.payload;\nconst prev = !!flow.get('driveOn');\nflow.set('driveOn', on);\nconst fanMsg = { payload: on, topic: 'drive' };\nconst started = flow.get('engineStarted');\nif (!prev && on) {\n  flow.set('engineStarted', true);\n  return [fanMsg, { payload: { text: 'Engine turned ON', kind: 'on' } }];\n}\nif (prev && !on && started) {\n  return [fanMsg, { payload: { text: 'Engine turned OFF', kind: 'off' } }];\n}\nreturn [fanMsg, null];",
+    "outputs": 2,
+    "x": 340,
+    "y": 100,
+    "wires": [
+      [
+        "ev-range-fan-anim"
+      ],
+      [
+        "ev-range-format-notify"
+      ]
+    ]
+  },
+  {
+    "id": "ev-range-fan-anim",
+    "type": "ui-template",
+    "z": "ev-range-flow",
+    "group": "ev-range-group-fan",
+    "page": "",
+    "ui": "",
+    "name": "Fan animation",
+    "order": 1,
+    "width": "3",
+    "height": "6",
+    "format": "<template>\n  <div class=\"fan-wrap\">\n    <svg :class=\"['fan-svg', { spinning: !off }]\" :style=\"svgStyle\" viewBox=\"0 0 120 120\">\n      <defs>\n        <radialGradient :id=\"'fan-housing-'+uid\" cx=\"50%\" cy=\"40%\" r=\"60%\">\n          <stop offset=\"0%\" stop-color=\"#3a3a3a\" />\n          <stop offset=\"100%\" stop-color=\"#0a0a0a\" />\n        </radialGradient>\n        <linearGradient :id=\"'fan-blade-'+uid\" x1=\"0%\" y1=\"0%\" x2=\"100%\" y2=\"100%\">\n          <stop offset=\"0%\" :stop-color=\"bladeHi\" />\n          <stop offset=\"100%\" :stop-color=\"bladeLo\" />\n        </linearGradient>\n        <radialGradient :id=\"'fan-hub-'+uid\" cx=\"50%\" cy=\"50%\" r=\"50%\">\n          <stop offset=\"0%\" stop-color=\"#bbb\" />\n          <stop offset=\"100%\" stop-color=\"#222\" />\n        </radialGradient>\n        <filter :id=\"'fan-glow-'+uid\" x=\"-50%\" y=\"-50%\" width=\"200%\" height=\"200%\">\n          <feGaussianBlur stdDeviation=\"3\" result=\"b\" />\n          <feMerge><feMergeNode in=\"b\"/><feMergeNode in=\"SourceGraphic\"/></feMerge>\n        </filter>\n      </defs>\n      <circle cx=\"60\" cy=\"60\" r=\"58\" :fill=\"'url(#fan-housing-'+uid+')'\" stroke=\"#555\" stroke-width=\"2\" />\n      <circle cx=\"60\" cy=\"60\" r=\"52\" fill=\"none\" stroke=\"#1a1a1a\" stroke-width=\"1\" />\n      <g :fill=\"'url(#fan-blade-'+uid+')'\" :filter=\"glowing?'url(#fan-glow-'+uid+')':''\" opacity=\"0.95\">\n        <path d=\"M60 60 C 70 30, 70 18, 60 8 C 50 18, 50 30, 60 60 Z\" />\n        <path d=\"M60 60 C 90 50, 102 50, 112 60 C 102 70, 90 70, 60 60 Z\" />\n        <path d=\"M60 60 C 50 90, 50 102, 60 112 C 70 102, 70 90, 60 60 Z\" />\n        <path d=\"M60 60 C 30 70, 18 70, 8 60 C 18 50, 30 50, 60 60 Z\" />\n      </g>\n      <circle cx=\"60\" cy=\"60\" r=\"10\" :fill=\"'url(#fan-hub-'+uid+')'\" stroke=\"#000\" stroke-width=\"1.5\" />\n      <circle cx=\"60\" cy=\"60\" r=\"3\" fill=\"#000\" />\n    </svg>\n    <div class=\"fan-meta\">\n      <div class=\"fan-value\" :style=\"{ color: bladeHi, textShadow: glowing ? `0 0 12px ${bladeHi}` : 'none' }\">{{ valueLabel }}</div>\n      <div class=\"fan-sublabel\">{{ rpmLabel }}</div>\n    </div>\n    <component :is=\"'style'\">.fan-slider .v-slider-track__background, .fan-slider .v-slider-track__background--opacity { background: {{ trackColor }} !important; opacity: 1 !important; } .fan-slider .v-slider-track__fill { background: {{ fillColor }} !important; } .fan-slider .v-slider-thumb__surface { background: {{ fillColor }} !important; } .fan-slider .v-icon { color: {{ fillColor }} !important; }</component>\n  </div>\n</template>\n<style>\n.fan-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:4px 4px;width:100%;}\n.fan-svg{width:140px;height:140px;min-width:140px;min-height:140px;max-width:140px;max-height:140px;flex:0 0 140px;aspect-ratio:1/1;transform-origin:50% 50%;filter:drop-shadow(0 4px 10px rgba(0,0,0,0.6));}\n.fan-svg.spinning{animation:fan-spin var(--fan-dur,2s) linear infinite;}\n@keyframes fan-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}\n.fan-meta{display:flex;flex-direction:column;align-items:center;margin-top:4px;font-family:'Roboto Mono',monospace;}\n.fan-value{font-size:22px;font-weight:900;letter-spacing:2px;transition:all 0.3s;}\n.fan-sublabel{font-size:13px;letter-spacing:4px;color:#999;margin-top:2px;}\n</style>\n<script>\nexport default {\n  data(){return {engineOn:false,speed:0,uid:Math.random().toString(36).slice(2,8)}},\n  computed:{\n    svgStyle(){const s=Math.max(1,this.speed);const dur=Math.max(0.18,2.6-(s/100)*2.42);return {'--fan-dur':dur+'s'}},\n    glowing(){return this.speed>0},\n    bladeHi(){if(this.speed===0)return '#666';if(this.speed<33)return '#3498db';if(this.speed<66)return '#ff6b35';return '#e74c3c'},\n    bladeLo(){if(this.speed===0)return '#333';if(this.speed<33)return '#1a4a6b';if(this.speed<66)return '#7a3215';return '#7a1d12'},\n    rpmLabel(){if(!this.engineOn||this.speed===0)return 'IDLE';if(this.speed<33)return 'LOW';if(this.speed<66)return 'MEDIUM';return 'HIGH'},\n    trackColor(){return this.speed===0?'rgba(231,76,60,0.35)':'rgba(255,107,53,0.30)'},\n    fillColor(){return this.speed===0?'#e74c3c':'#ff6b35'},\n    off(){return !this.engineOn||this.speed===0},\n    valueLabel(){return this.off?'OFF':this.speed+'%'}\n  },\n  watch:{msg:{handler(m){if(!m||m.payload==null)return;if(m.topic==='drive'){this.engineOn=!!m.payload;return;}const n=Number(m.payload);if(!isNaN(n))this.speed=Math.max(0,Math.min(100,Math.round(n)));},deep:true,immediate:true}}\n}\n</script>",
+    "storeOutMessages": true,
+    "passthru": false,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "className": "",
+    "x": 820,
+    "y": 240,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ev-range-slider-hvac",
+    "type": "ui-slider",
+    "z": "ev-range-flow",
+    "group": "ev-range-group-controls",
+    "name": "Fan Speed",
+    "label": "Fan Speed",
+    "tooltip": "",
+    "order": 1,
+    "width": "6",
+    "height": "1",
+    "passthru": true,
+    "outs": "all",
+    "topic": "fan-speed",
+    "topicType": "str",
+    "min": "0",
+    "max": "100",
+    "step": "1",
+    "thumbLabel": true,
+    "showTicks": "always",
+    "className": "fan-slider",
+    "x": 120,
+    "y": 400,
+    "wires": [
+      [
+        "ev-range-format-hvac",
+        "ev-range-fan-relay"
+      ]
+    ]
+  },
+  {
+    "id": "ev-range-fan-relay",
+    "type": "function",
+    "z": "ev-range-flow",
+    "name": "Fan slider relay",
+    "func": "const n = Number(msg.payload);\nif (isNaN(n)) return null;\nreturn { payload: Math.round(n), topic: 'fan' };",
+    "outputs": 1,
+    "x": 340,
+    "y": 340,
+    "wires": [
+      [
+        "ev-range-fan-anim"
+      ]
+    ]
+  },
+  {
+    "id": "ev-range-format-hvac",
+    "type": "function",
+    "z": "ev-range-flow",
+    "name": "Format HVAC",
+    "func": "const val = Number(msg.payload);\nif (isNaN(val)) return null;\nmsg.payload = { key: 'sim/cabin/fan-speed', value: val, source: 'dashboard' };\nreturn msg;",
+    "outputs": 1,
+    "x": 340,
+    "y": 420,
+    "wires": [
+      [
+        "ev-range-publish-hvac"
+      ]
+    ]
+  },
+  {
+    "id": "ev-range-publish-hvac",
+    "type": "http request",
+    "z": "ev-range-flow",
+    "name": "Publish HVAC",
+    "method": "POST",
+    "ret": "obj",
+    "url": "http://127.0.0.1:1881/publish",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 560,
+    "y": 420,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ev-range-switch-heat",
+    "type": "ui-switch",
+    "z": "ev-range-flow",
+    "group": "ev-range-group-controls",
+    "name": "Seat Heating",
+    "label": "Seat Heating",
+    "tooltip": "",
+    "order": 2,
+    "width": "3",
+    "height": "1",
+    "passthru": false,
+    "onvalue": "true",
+    "onvalueType": "bool",
+    "offvalue": "false",
+    "offvalueType": "bool",
+    "onlabel": "On",
+    "offlabel": "Off",
+    "onicon": "",
+    "officon": "",
+    "topic": "seat.heating",
+    "topicType": "str",
+    "className": "",
+    "x": 120,
+    "y": 500,
+    "wires": [
+      [
+        "ev-range-format-seat-heat"
+      ]
+    ]
+  },
+  {
+    "id": "ev-range-format-seat-heat",
+    "type": "function",
+    "z": "ev-range-flow",
+    "name": "Format Seat Heat",
+    "func": "const val = msg.payload ? 5 : 0;\nmsg.payload = { key: 'sim/cabin/seat/heating', value: val, source: 'dashboard' };\nreturn msg;",
+    "outputs": 1,
+    "x": 340,
+    "y": 500,
+    "wires": [
+      [
+        "ev-range-publish-seat"
+      ]
+    ]
+  },
+  {
+    "id": "ev-range-switch-cool",
+    "type": "ui-switch",
+    "z": "ev-range-flow",
+    "group": "ev-range-group-controls",
+    "name": "Seat Cooling",
+    "label": "Seat Cool/Heat",
+    "tooltip": "",
+    "order": 3,
+    "width": "3",
+    "height": "1",
+    "passthru": false,
+    "onvalue": "true",
+    "onvalueType": "bool",
+    "offvalue": "false",
+    "offvalueType": "bool",
+    "onlabel": "Cool",
+    "offlabel": "Off",
+    "onicon": "",
+    "officon": "",
+    "topic": "seat.heating_cooling",
+    "topicType": "str",
+    "className": "",
+    "x": 120,
+    "y": 580,
+    "wires": [
+      [
+        "ev-range-format-seat-cool"
+      ]
+    ]
+  },
+  {
+    "id": "ev-range-format-seat-cool",
+    "type": "function",
+    "z": "ev-range-flow",
+    "name": "Format Seat Cool",
+    "func": "const val = msg.payload ? -5 : 0;\nmsg.payload = { key: 'sim/cabin/seat/heating_cooling', value: val, source: 'dashboard' };\nreturn msg;",
+    "outputs": 1,
+    "x": 340,
+    "y": 580,
+    "wires": [
+      [
+        "ev-range-publish-seat"
+      ]
+    ]
+  },
+  {
+    "id": "ev-range-publish-seat",
+    "type": "http request",
+    "z": "ev-range-flow",
+    "name": "Publish Seat",
+    "method": "POST",
+    "ret": "obj",
+    "url": "http://127.0.0.1:1881/publish",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 560,
+    "y": 540,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ev-range-slider-voltage",
+    "type": "ui-text",
+    "z": "ev-range-flow",
+    "group": "ev-range-group-battery",
+    "name": "Voltage",
+    "label": "Voltage (V)",
+    "order": 1,
+    "width": "3",
+    "height": "2",
+    "format": "{{msg.payload | number:1}} V",
+    "layout": "row-center",
+    "style": true,
+    "font": "",
+    "fontSize": 28,
+    "color": "#27ae60",
+    "className": "",
+    "x": 820,
+    "y": 800,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ev-range-slider-current",
+    "type": "ui-text",
+    "z": "ev-range-flow",
+    "group": "ev-range-group-battery",
+    "name": "Current",
+    "label": "Current (A)",
+    "order": 2,
+    "width": "3",
+    "height": "2",
+    "format": "{{msg.payload | number:1}} A",
+    "layout": "row-center",
+    "style": true,
+    "font": "",
+    "fontSize": 28,
+    "color": "#f39c12",
+    "className": "",
+    "x": 820,
+    "y": 860,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ev-range-slider-soc",
+    "type": "ui-gauge",
+    "z": "ev-range-flow",
+    "group": "ev-range-group-battery",
+    "name": "Battery SOC",
+    "label": "SOC",
+    "order": 3,
+    "width": "3",
+    "height": "3",
+    "gtype": "gauge-battery",
+    "gstyle": "needle",
+    "title": "State of Charge",
+    "units": "%",
+    "min": "0",
+    "max": "100",
+    "segments": [
+      {
+        "from": "0",
+        "color": "#e74c3c"
+      },
+      {
+        "from": "20",
+        "color": "#f39c12"
+      },
+      {
+        "from": "50",
+        "color": "#27ae60"
+      }
+    ],
+    "className": "",
+    "x": 820,
+    "y": 900,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ev-range-battery-meter",
+    "type": "ui-gauge",
+    "z": "ev-range-flow",
+    "group": "ev-range-group-battery",
+    "name": "Battery Meter",
+    "label": "Battery",
+    "order": 4,
+    "width": "3",
+    "height": "3",
+    "gtype": "gauge-battery",
+    "gstyle": "needle",
+    "title": "Battery Level",
+    "units": "%",
+    "min": "0",
+    "max": "100",
+    "segments": [
+      {
+        "from": "0",
+        "color": "#e74c3c"
+      },
+      {
+        "from": "20",
+        "color": "#f39c12"
+      },
+      {
+        "from": "50",
+        "color": "#27ae60"
+      }
+    ],
+    "className": "",
+    "x": 820,
+    "y": 940,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ev-range-text-hvac-status",
+    "type": "ui-text",
+    "z": "ev-range-flow",
+    "group": "ev-range-group-status",
+    "name": "HVAC Status",
+    "label": "Fan",
+    "order": 1,
+    "width": "4",
+    "height": "1",
+    "format": "{{msg.payload}}",
+    "layout": "row-left",
+    "style": false,
+    "font": "",
+    "fontSize": 14,
+    "color": "#717171",
+    "className": "",
+    "x": 820,
+    "y": 1000,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ev-range-text-seat-heat-status",
+    "type": "ui-text",
+    "z": "ev-range-flow",
+    "group": "ev-range-group-status",
+    "name": "Seat Heat Status",
+    "label": "Seat Heat",
+    "order": 2,
+    "width": "4",
+    "height": "1",
+    "format": "{{msg.payload}}",
+    "layout": "row-left",
+    "style": false,
+    "font": "",
+    "fontSize": 14,
+    "color": "#717171",
+    "className": "",
+    "x": 820,
+    "y": 1060,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ev-range-text-seat-cool-status",
+    "type": "ui-text",
+    "z": "ev-range-flow",
+    "group": "ev-range-group-status",
+    "name": "Seat Cool Status",
+    "label": "Seat Cool",
+    "order": 3,
+    "width": "4",
+    "height": "1",
+    "format": "{{msg.payload}}",
+    "layout": "row-left",
+    "style": false,
+    "font": "",
+    "fontSize": 14,
+    "color": "#717171",
+    "className": "",
+    "x": 820,
+    "y": 1120,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ev-range-format-notify",
+    "type": "function",
+    "z": "ev-range-flow",
+    "name": "Format notification",
+    "func": "if (!msg || !msg.payload) return null;\nconst p = msg.payload;\nif (typeof p === 'string') return msg;\nif (p.text) { msg.payload = p.text; return msg; }\nreturn null;",
+    "outputs": 1,
+    "x": 540,
+    "y": 180,
+    "wires": [
+      [
+        "ev-range-notify"
+      ]
+    ]
+  },
+  {
+    "id": "ev-range-notify",
+    "type": "ui-notification",
+    "z": "ev-range-flow",
+    "ui": "ev-range-ui-base",
+    "position": "top right",
+    "colorDefault": "#0094ce",
+    "colorWarn": "#ff6b35",
+    "colorError": "#e74c3c",
+    "displayTime": "3",
+    "showCountdown": true,
+    "outputs": 0,
+    "allowDismiss": true,
+    "raw": false,
+    "className": "",
+    "name": "Notification",
+    "x": 720,
+    "y": 180,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ev-range-poll-timer",
+    "type": "inject",
+    "z": "ev-range-flow",
+    "name": "Poll bridge (2s)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "2",
+    "crontab": "",
+    "once": true,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 120,
+    "y": 1200,
+    "wires": [
+      [
+        "ev-range-get-state"
+      ]
+    ]
+  },
+  {
+    "id": "ev-range-get-state",
+    "type": "http request",
+    "z": "ev-range-flow",
+    "name": "GET bridge state",
+    "method": "GET",
+    "ret": "obj",
+    "url": "http://127.0.0.1:1881/state",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 340,
+    "y": 1200,
+    "wires": [
+      [
+        "ev-range-update-status"
+      ]
+    ]
+  },
+  {
+    "id": "ev-range-update-status",
+    "type": "function",
+    "z": "ev-range-flow",
+    "name": "Build status text",
+    "func": "const payload = msg.payload || {};\nconst statuses = payload.statuses || {};\nconst signals = payload.signals || {};\n\n// ----- HVAC -----\nconst hvacStatus = statuses['dash/status/hvac'];\nlet hvacOn = false;\nlet hvacVal = 0;\nlet hvacText = 'awaiting ECU...';\nlet hvacSrc = '?';\nif (hvacStatus) {\n  if (hvacStatus.value !== undefined && hvacStatus.value !== null) {\n    hvacVal = Number(hvacStatus.value) || 0;\n    hvacOn = hvacVal > 0;\n  } else if (hvacStatus.status) {\n    hvacOn = String(hvacStatus.status).toLowerCase() === 'on';\n  }\n  if (!hvacOn) hvacVal = 0;\n  hvacSrc = hvacStatus.source || hvacStatus._endpoint || '?';\n  hvacText = `Fan ${hvacOn ? 'ON' : 'OFF'} (${hvacVal}%)  src=${hvacSrc}`;\n}\nconst hvacDot = hvacOn ? '🟢' : '🔴';\n\n// ----- Seat -----\nconst heatStatus = statuses['dash/status/seat#seat.heating'];\nconst coolStatus = statuses['dash/status/seat#seat.heating_cooling'];\nconst heatingVal = heatStatus ? Number(heatStatus.value ?? 0) : 0;\nconst hcVal = coolStatus ? Number(coolStatus.value ?? 0) : 0;\nconst heatOn = (heatingVal !== 0) || (hcVal > 0);\nconst coolOn = (hcVal < 0);\nconst heatDot = heatOn ? '🔴' : '⚪';\nconst coolDot = coolOn ? '🔵' : '⚪';\nconst heatSrc = heatStatus ? (heatStatus.source || heatStatus._endpoint || '?') : '-';\nconst coolSrc = coolStatus ? (coolStatus.source || coolStatus._endpoint || '?') : '-';\nconst heatText = heatStatus ? `heating=${heatingVal} hc=${hcVal}  src=${heatSrc}` : 'awaiting ECU...';\nconst coolText = coolStatus ? `hc=${hcVal}  src=${coolSrc}` : 'awaiting ECU...';\n\n// ----- Battery -----\nconst voltage = signals['sim/battery/voltage'];\nconst current = signals['sim/battery/current'];\nconst soc = signals['sim/battery/soc'];\n\n// ----- Change detection -----\nconst prev = flow.get('lastStatusSnap') || {};\nconst snap = { hvacVal, heatingVal, hcVal, voltage, current, soc, hvacOn, heatOn, coolOn };\nflow.set('lastStatusSnap', snap);\n\n// ----- Notifications -----\nlet notif = null;\nif (flow.get('engineStarted')) {\n  if (prev.hvacOn === false && hvacOn) notif = { payload: { text: 'Fan turned ON', kind: 'on' } };\n  else if (prev.hvacOn === true && !hvacOn) notif = { payload: { text: 'Fan turned OFF', kind: 'off' } };\n  else if (prev.heatOn === false && heatOn) notif = { payload: { text: 'Seat heating turned ON', kind: 'on' } };\n  else if (prev.heatOn === true && !heatOn) notif = { payload: { text: 'Seat heating turned OFF', kind: 'off' } };\n  else if (prev.coolOn === false && coolOn) notif = { payload: { text: 'Seat cooling turned ON', kind: 'on' } };\n  else if (prev.coolOn === true && !coolOn) notif = { payload: { text: 'Seat cooling turned OFF', kind: 'off' } };\n}\n\nreturn [\n  { payload: `${hvacDot}  ${hvacText}` },\n  { payload: `${heatDot}  ${heatText}` },\n  { payload: `${coolDot}  ${coolText}` },\n  (prev.hvacVal !== hvacVal) ? { payload: hvacVal } : null,\n  (prev.heatingVal !== heatingVal) ? { payload: heatOn } : null,\n  (prev.hcVal !== hcVal) ? { payload: coolOn } : null,\n  (voltage !== undefined && prev.voltage !== voltage) ? { payload: voltage } : null,\n  (current !== undefined && prev.current !== current) ? { payload: current } : null,\n  (soc !== undefined && prev.soc !== soc) ? { payload: soc } : null,\n  notif\n];",
+    "outputs": 10,
+    "x": 560,
+    "y": 1200,
+    "wires": [
+      [
+        "ev-range-text-hvac-status"
+      ],
+      [
+        "ev-range-text-seat-heat-status"
+      ],
+      [
+        "ev-range-text-seat-cool-status"
+      ],
+      [
+        "ev-range-slider-hvac",
+        "ev-range-fan-anim"
+      ],
+      [
+        "ev-range-switch-heat"
+      ],
+      [
+        "ev-range-switch-cool"
+      ],
+      [
+        "ev-range-slider-voltage"
+      ],
+      [
+        "ev-range-slider-current"
+      ],
+      [
+        "ev-range-slider-soc",
+        "ev-range-battery-meter"
+      ],
+      [
+        "ev-range-format-notify"
+      ]
+    ]
+  }
+]
