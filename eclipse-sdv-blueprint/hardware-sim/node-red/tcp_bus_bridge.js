@@ -184,7 +184,7 @@ const server = http.createServer(async (req, res) => {
         key,
         value: msg.value,
         source: msg.source || "node-red",
-        ts: msg.ts || Date.now()
+        ts: msg.ts || ts()
       };
 
       state.signals[key] = payload.value;
@@ -207,7 +207,7 @@ for (const name of Object.keys(endpoints)) {
   connectEndpoint(name);
 }
 
-server.listen(BRIDGE_PORT, () => {
+server.listen(BRIDGE_PORT, "127.0.0.1", () => {
   log("INFO", "bridge HTTP API listening", {
     listenPort: BRIDGE_PORT,
     vm1: `${endpoints["vm1-bms"].host}:${endpoints["vm1-bms"].port}`,

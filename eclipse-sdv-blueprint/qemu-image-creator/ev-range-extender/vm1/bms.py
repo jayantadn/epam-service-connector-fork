@@ -57,24 +57,71 @@ def log(msg: str) -> None:
     print(f"[{ts}] [bms] {msg}", flush=True)
 
 
-async def push_to_kuksa(client: VSSClient, path: str, value, cast, src: str) -> None:
+async def wait_for_kuksa(host: str, port: int, max_attempts: int = 600) -> VSSClient:
+    """Block until the Databroker accepts a gRPC connection.
+
+    The SDV runtime helper may tear down and recreate its container during
+    first boot; a plain TCP port check can pass on the old instance and
+    then fail on writes.  Opening a real client session avoids that race.
+    """
+    log(f"Waiting for Kuksa Databroker at {host}:{port}...")
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        client = VSSClient(host, port)
+        try:
+            await client.connect()
+            log("Connected to Kuksa.")
+            return client
+        except Exception as exc:
+            last_exc = exc
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            if attempt == 1 or attempt % 30 == 0:
+                log(f"Kuksa not ready yet (attempt {attempt}/{max_attempts}): {exc}")
+            await asyncio.sleep(1)
+    raise RuntimeError(
+        f"Kuksa Databroker at {host}:{port} did not become ready: {last_exc}"
+    )
+
+
+async def push_to_kuksa(
+    kuksa_holder: dict[str, VSSClient],
+    kuksa_target: tuple[str, int],
+    path: str,
+    value,
+    cast,
+    src: str,
+) -> None:
     try:
         coerced = cast(value)
     except (TypeError, ValueError) as exc:
         log(f"WARN cannot cast {value!r} -> {cast.__name__} for {path}: {exc}")
         return
-    try:
-        await client.set_current_values({path: Datapoint(coerced)})
-    except Exception as exc:
-        log(f"ERROR writing {path}={coerced} to Kuksa: {exc}")
-        return
-    log(f"OK   {path} = {coerced} (from {src})")
+
+    host, port = kuksa_target
+    for attempt in range(1, 4):
+        client = kuksa_holder["client"]
+        try:
+            await client.set_current_values({path: Datapoint(coerced)})
+            log(f"OK   {path} = {coerced} (from {src})")
+            return
+        except Exception as exc:
+            if attempt >= 3:
+                log(f"ERROR writing {path}={coerced} to Kuksa: {exc}")
+                return
+            log(f"WARN Kuksa write failed (attempt {attempt}/3), reconnecting: {exc}")
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            kuksa_holder["client"] = await wait_for_kuksa(host, port, max_attempts=30)
 
 
 async def run(host: str, port: int, kuksa_host: str, kuksa_port: int) -> None:
-    log(f"Connecting to Kuksa Databroker at {kuksa_host}:{kuksa_port}...")
-    async with VSSClient(kuksa_host, kuksa_port) as kuksa:
-        log("Connected to Kuksa.")
+    kuksa_holder = {"client": await wait_for_kuksa(kuksa_host, kuksa_port)}
+    try:
         log("TCP keys -> VSS paths:")
         for k, (vss, cast) in KEY_TO_VSS.items():
             log(f"    {k}  ->  {vss}  ({cast.__name__})")
@@ -111,7 +158,14 @@ async def run(host: str, port: int, kuksa_host: str, kuksa_port: int) -> None:
                         if value is None:
                             log(f"WARN missing 'value' for key '{key}'")
                             continue
-                        await push_to_kuksa(kuksa, vss_path, value, cast, src)
+                        await push_to_kuksa(
+                            kuksa_holder,
+                            (kuksa_host, kuksa_port),
+                            vss_path,
+                            value,
+                            cast,
+                            src,
+                        )
             except Exception as exc:
                 log(f"ERROR in client handler for {addr}: {exc}")
             finally:
@@ -122,6 +176,11 @@ async def run(host: str, port: int, kuksa_host: str, kuksa_port: int) -> None:
         log(f"BMS TCP server listening on {host}:{port}")
         async with server:
             await server.serve_forever()
+    finally:
+        try:
+            await kuksa_holder["client"].disconnect()
+        except Exception:
+            pass
 
 
 def parse_args() -> argparse.Namespace:

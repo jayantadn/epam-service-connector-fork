@@ -5,7 +5,7 @@
   "description": "Node-RED EV range extender dashboard with TCP bridge to VM ECUs",
   "scripts": {
     "bridge": "node tcp_bus_bridge.js",
-    "node-red": "node-red --userDir . --flowFile flows/ev-range-dashboard.json",
+    "node-red": "./node_modules/.bin/node-red --userDir . --flowFile flows/ev-range-dashboard.json",
     "dashboard": "node tcp_bus_bridge.js & BRIDGE_PID=$!; trap 'kill $BRIDGE_PID 2>/dev/null' EXIT INT TERM; node-red --userDir . --flowFile flows/ev-range-dashboard.json",
     "start": "npm run dashboard"
   },

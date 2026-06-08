@@ -95,8 +95,13 @@ def _systemd_unit(description: str, exec_cmd: str, after_kuksa_helper: str,
     if not require_databroker_wait:
         wait_for_databroker = ""
     elif databroker_host == "127.0.0.1":
+        # Wait for the runtime helper's ready marker, not just :55555.
+        # The port can be briefly open on a stale container while
+        # evrange-start-runtime tears it down and recreates sdv-runtime.
         wait_for_databroker = (
-            "ExecStartPre=/bin/bash -c 'for i in $(seq 1 600); do ss -ltn 2>/dev/null | grep -q \":55555 \" && exit 0; sleep 1; done; exit 1'"
+            "ExecStartPre=/bin/bash -c 'for i in $(seq 1 600); do "
+            "test -f /tmp/evrange-runtime.ready && "
+            "ss -ltn 2>/dev/null | grep -q \":55555 \" && exit 0; sleep 1; done; exit 1'"
         )
     else:
         wait_for_databroker = (
