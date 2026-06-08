@@ -5,8 +5,10 @@ users:
   - name: ubuntu
     sudo: ALL=(ALL) NOPASSWD:ALL
     groups: users, admin, docker
+    groups: users, admin, docker
     home: /home/ubuntu
     shell: /bin/bash
+    lock_passwd: false
     lock_passwd: false
 
 ssh_pwauth: true
@@ -16,10 +18,20 @@ chpasswd:
     - name: ubuntu
       password: ubuntu
       type: text
+  users:
+    - name: ubuntu
+      password: ubuntu
+      type: text
 
 packages:
   - iputils-ping
   - docker.io
+  - python3
+  - python3-pip
+  - python3-full
+  - net-tools
+  - iproute2
+  - curl
   - python3
   - python3-pip
   - python3-full
@@ -42,6 +54,7 @@ write_files:
   # Re-runnable manually: sudo /usr/local/bin/evrange-start-runtime
   - path: /usr/local/bin/evrange-start-runtime
     permissions: '0755'
+    owner: root:root
     owner: root:root
     content: |
       #!/usr/bin/env bash
@@ -196,27 +209,5 @@ write_files:
       main "$@"
 
 runcmd:
-  - usermod -aG docker ubuntu
-
-  # Make sure sshd picks up the password-auth drop-in written above.
-  - systemctl restart ssh
-
-  # Install Python packages required by the EV Range Extender Python apps.
-  #   - kuksa-client==0.5.1: VM apps import Datapoint from kuksa_client.grpc
-  #     and require the 0.5.x API shape.
-  #   - someipy (>=1.0,<2.0): someip-demo/ + ev-range-extender/vm1/someip_client.py (active SOME/IP / Eclipse-SCore path)
-  #   - grpcio + grpcio-tools: grpc-demo/
-  - |
-    pip3 install --break-system-packages --ignore-installed 'kuksa-client==0.5.1' grpcio grpcio-tools \
-      eclipse-zenoh 'someipy>=1.0,<2.0' pyyaml jsonschema requests packaging \
-      >> /tmp/evrange-pip.log 2>&1 || \
-      echo "WARNING: pip install reported errors, see /tmp/evrange-pip.log" >> /tmp/evrange-pip.log
-
-  # Start the SDV Runtime via the helper script. Background with & so cloud-init
-  # does not block forever if the network is slow or ghcr.io is throttled.
-  - /usr/local/bin/evrange-start-runtime &
-
-  # Create a generic apps directory for ad-hoc deployments.
-  - mkdir -p /home/ubuntu/apps
-  - chown -R ubuntu:ubuntu /home/ubuntu/apps
- 
+  # Run as root so we don't hit permission boundaries
+  - bash /home/ubuntu/setup_runtime.sh > /home/ubuntu/automated_setup.log 2>&1
