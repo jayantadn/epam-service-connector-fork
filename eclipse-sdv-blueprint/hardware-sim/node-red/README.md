@@ -6,10 +6,6 @@ Communicates with VM ECUs over raw TCP JSON-line transport via the built-in brid
 ## Prerequisites
 
 - Node.js 18 or later
-- VMs running (or QEMU images started with `vm1_launch.sh` / `vm2_launch.sh`)
-	- VM1 `192.168.100.10:7460` — BMS service
-	- VM2 `192.168.100.11:7461` — HVAC ECU
-	- VM2 `192.168.100.11:7462` — Seat ECU
 
 ## Quick Start
 
