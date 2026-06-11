@@ -99,7 +99,11 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 
 1.[Execute Automated setup](#automated-setup) 
 2.[Application Execution](#application-execution)
-3.
+3.[Start the hardware simulator](#start-the-hardware-simulator)
+4.[Steps to demo](#steps-to-demo)
+
+⚠️ Disclaimer: Please follow the above steps , if dashboard does not display the values, hwsim should be re-launched.
+
 ### Automated Setup
 
 1. A helper script is available to create VMs [here](qemu-image-creator/README.md)
@@ -177,6 +181,8 @@ python hardware-sim/pytk_hwsim.py
 
 See the [hardware simulator README](hardware-sim/README.md) for the full control and status map.
 
+For nodered hardware simulator there is helper script to launch [here](hardware-sim/node-red/README.md)
+
 ### Steps to demo
 
 Follow these steps:
@@ -185,7 +191,7 @@ Follow these steps:
 2. **After the hardware simulator is running, execute the playground application (SDV code).**
 3. **Press the Start button in the hardware simulator** to begin battery drain.
 4. **Observe threshold behavior:**
-	- Up to **50% battery**, the HVAC fan is reduced gradually; once the battery reaches **50%**, the fan turns off.
+	- At **50% battery**, the HVAC fan is turned off; once the battery reaches **50%**, the fan turns off.
 	- At **30% battery**, stricter power-saving behavior is applied and seat heating/cooling are turned off.
 	- When the fan turns off, a small rise in range can be observed. When seat heating/cooling also turn off, the range increases further.
 

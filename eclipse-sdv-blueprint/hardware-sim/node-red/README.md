@@ -25,6 +25,7 @@ Dashboard URLs:
 - **Editor:** http://127.0.0.1:1880
 - **Bridge API:** http://127.0.0.1:1881/state
 
+
 ## Architecture
 
 ```
