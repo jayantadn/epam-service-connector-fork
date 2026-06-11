@@ -98,7 +98,7 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 ### System Setup Workflow
 
 - [Execute Automated setup](#automated-setup)  
-- [Application Execution](#application-execution)  
+- [Application Execution on Digital.Auto](#application-execution)  
 - [Start the hardware simulator](#start-the-hardware-simulator)  
 - [Steps to demo](#steps-to-demo)
 
