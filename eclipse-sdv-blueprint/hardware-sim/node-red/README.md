@@ -14,6 +14,14 @@ cd hardware-sim/node-red
 npm install          # first time only
 npm run dashboard    # starts tcp_bus_bridge.js (1881) then Node-RED (1880)
 ```
+if execution fails 
+```bash
+chmod +x ./node_modules/.bin/node-red
+```
+try changing permission for node modules and run the 
+```bash 
+npm run dashboard
+``` 
 
 `npm run dashboard` uses `start-dashboard.sh`, which reuses an already-running
 bridge on port `1881` or starts one if needed. Node-RED alone is not enough —
