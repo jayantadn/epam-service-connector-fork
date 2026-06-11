@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Eclipse Foundation.
+#
+# This program and the accompanying materials are made available under the
+# terms of the MIT License which is available at
+# https://opensource.org/licenses/MIT.
+#
+# SPDX-License-Identifier: MIT
 """Compose cloud-init user-data for VM1 and VM2.
 
 Reads a human-edited template (`input/user-data-vm{1,2}`) and produces a

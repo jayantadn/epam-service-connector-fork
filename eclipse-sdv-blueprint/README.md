@@ -167,8 +167,7 @@ With both VMs running and the EV Range Extender application executed from the di
 
 ```bash
 ./hardware-sim/setup.sh
-pip install -r hardware-sim/requirements.txt
-python hardware-sim/pytk_dashboard.py
+python hardware-sim/pytk_hwsim.py
 ```
 
 See the [hardware simulator README](hardware-sim/README.md) for the full control and status map.
