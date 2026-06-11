@@ -97,10 +97,10 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 
 ### System Setup Workflow
 
-1.[Execute Automated setup](#automated-setup) 
-2.[Application Execution](#application-execution)
-3.[Start the hardware simulator](#start-the-hardware-simulator)
-4.[Steps to demo](#steps-to-demo)
+- [Execute Automated setup](#automated-setup)  
+- [Application Execution](#application-execution)  
+- [Start the hardware simulator](#start-the-hardware-simulator)  
+- [Steps to demo](#steps-to-demo)
 
 ⚠️ Disclaimer: Please follow the above steps , if dashboard does not display the values, hwsim should be re-launched.
 
