@@ -102,7 +102,6 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 - [Start the hardware simulator](#start-the-hardware-simulator)  
 - [Steps to demo](#steps-to-demo)
 
-⚠️ Disclaimer: Please follow the above steps , if dashboard does not display the values, hwsim should be re-launched.
 
 ### Automated Setup
 
@@ -178,6 +177,7 @@ With both VMs running and the EV Range Extender application executed from the di
 ./hardware-sim/setup.sh
 python hardware-sim/pytk_hwsim.py
 ```
+⚠️ Disclaimer: Please follow the above steps , if dashboard does not display the values, hwsim should be re-launched.
 
 See the [hardware simulator README](hardware-sim/README.md) for the full control and status map.
 
