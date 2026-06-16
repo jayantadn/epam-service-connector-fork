@@ -102,6 +102,7 @@ Phase 1 is designed for **rapid development and validation**. Everything runs in
 - [Start the hardware simulator](#start-the-hardware-simulator)  
 - [Steps to demo](#steps-to-demo)
 
+⚠️ Disclaimer: Please follow the above steps for clear setup and demo.
 
 ### Automated Setup
 
