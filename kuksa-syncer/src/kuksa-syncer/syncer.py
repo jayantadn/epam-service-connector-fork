@@ -5,7 +5,7 @@
 # https://opensource.org/licenses/MIT.
 #
 # SPDX-License-Identifier: MIT
-
+import shutil
 import signal
 import subprocess
 from kuksa_client.grpc.aio import VSSClient
@@ -49,6 +49,7 @@ sio = socketio.AsyncClient()
 
 client = VSSClient(BORKER_IP, BROKER_PORT)
 
+mock_signal_read_ony_filename = "signals.json"   # Writable volume is /storage
 mock_signal_path = "/storage/signals.json"   # Writable volume is /storage
 
 def is_process_running_nix(process_name):
@@ -859,6 +860,10 @@ async def main():
     await asyncio.gather(start_socketio(SERVER), ticker(), ticker_fast(), ticker_5s())
 
 if __name__ == "__main__":
+    # Copy signalss.json to writable partition
+    shutil.copy(mock_signal_read_ony_filename, mock_signal_path)
+    print("Copied signals.json to writable partition: " + mock_signal_path, flush=True)
+
     loop = asyncio.get_event_loop()
     try:
         loop.run_until_complete(main())
