@@ -27,7 +27,7 @@ from project_utils import create_project_from_json
 # Apply global JSON patch for array serialization
 apply_global_patch()
 
-from vehicle_model_manager import generate_vehicle_model, revert_vehicle_model
+# from vehicle_model_manager import generate_vehicle_model, revert_vehicle_model
 import pkg_manager
 
 BORKER_IP = 'kuksa'  # Aos Unit (model Bosch) has a Kuksa databroker at this address
@@ -320,68 +320,72 @@ async def messageToKit(data):
         # print(data["data"])
         # print type of data["data"]
         # print(type(data["data"]))
+        print("not supported command: generate_vehicle_model")
 
-        try:
-            await sio.emit("messageToKit-kitReply", {
-                "kit_id": CLIENT_ID,
-                "request_from": data["request_from"],
-                "cmd": "revert_vehicle_model",
-                "result": "Start to rebuild vehicle model...\r\n"
-            })
-            stopMockService()
-            generate_vehicle_model(json.dumps(data["data"]))
-            
-            time.sleep(0.5)
-            if not os.environ.get('DISABLE_DATABROKER'):
-                # Check is databroker app running or not
-                if is_process_running_nix("databroker"):
-                    print("databroker is running")
-                else:
-                    print("databroker is not running")
-                    raise Exception("Databroker is not running")
-                
-                # Wait until databroker is fully ready (port is listening)
-                wait_for_databroker_ready()
-            
-            modifyMockSignal([""])
-            time.sleep(0.5)
-            startMockService()
-            await sio.emit("messageToKit-kitReply", {
-                "kit_id": CLIENT_ID,
-                "request_from": data["request_from"],
-                "cmd": "generate_vehicle_model",
-                "result": "Generate new model Successful"
-            })
-            return 0
-        except Exception as e:
-            # print("generate_vehicle_model Error: ", str(e))
-            
-            await sio.emit("messageToKit-kitReply", {
-                "kit_id": CLIENT_ID,
-                "request_from": data["request_from"],
-                "cmd": "generate_vehicle_model",
-                "result": "Error: generate_vehicle_model Failed: " + str(e) + "\r\nRevert back to default model" 
-            })
-            revert_vehicle_model();
-            return 0
+        # try:
+        #     await sio.emit("messageToKit-kitReply", {
+        #         "kit_id": CLIENT_ID,
+        #         "request_from": data["request_from"],
+        #         "cmd": "revert_vehicle_model",
+        #         "result": "Start to rebuild vehicle model...\r\n"
+        #     })
+        #     stopMockService()
+        #     generate_vehicle_model(json.dumps(data["data"]))
+        #
+        #     time.sleep(0.5)
+        #     if not os.environ.get('DISABLE_DATABROKER'):
+        #         # Check is databroker app running or not
+        #         if is_process_running_nix("databroker"):
+        #             print("databroker is running")
+        #         else:
+        #             print("databroker is not running")
+        #             raise Exception("Databroker is not running")
+        #
+        #         # Wait until databroker is fully ready (port is listening)
+        #         wait_for_databroker_ready()
+        #
+        #     modifyMockSignal([""])
+        #     time.sleep(0.5)
+        #     startMockService()
+        #     await sio.emit("messageToKit-kitReply", {
+        #         "kit_id": CLIENT_ID,
+        #         "request_from": data["request_from"],
+        #         "cmd": "generate_vehicle_model",
+        #         "result": "Generate new model Successful"
+        #     })
+        #     return 0
+        # except Exception as e:
+        #     # print("generate_vehicle_model Error: ", str(e))
+        #
+        #     await sio.emit("messageToKit-kitReply", {
+        #         "kit_id": CLIENT_ID,
+        #         "request_from": data["request_from"],
+        #         "cmd": "generate_vehicle_model",
+        #         "result": "Error: generate_vehicle_model Failed: " + str(e) + "\r\nRevert back to default model"
+        #     })
+        #     revert_vehicle_model();
+        #     return 0
+        return 0
 
     if data["cmd"] == "revert_vehicle_model":
-        await sio.emit("messageToKit-kitReply", {
-            "kit_id": CLIENT_ID,
-            "request_from": data["request_from"],
-            "cmd": "revert_vehicle_model",
-            "result": "Start to revert to default vehicle model...\r\n"
-        })
-        stopMockService()
-        revert_vehicle_model()
-        time.sleep(0.5)
-        startMockService()
-        await sio.emit("messageToKit-kitReply", {
-            "kit_id": CLIENT_ID,
-            "request_from": data["request_from"],
-            "cmd": "revert_vehicle_model",
-            "result": "Revert to default Vehicle Model Successful\r\n"
-        })
+        print("not supported command: revert_vehicle_model")
+
+        # await sio.emit("messageToKit-kitReply", {
+        #     "kit_id": CLIENT_ID,
+        #     "request_from": data["request_from"],
+        #     "cmd": "revert_vehicle_model",
+        #     "result": "Start to revert to default vehicle model...\r\n"
+        # })
+        # stopMockService()
+        # revert_vehicle_model()
+        # time.sleep(0.5)
+        # startMockService()
+        # await sio.emit("messageToKit-kitReply", {
+        #     "kit_id": CLIENT_ID,
+        #     "request_from": data["request_from"],
+        #     "cmd": "revert_vehicle_model",
+        #     "result": "Revert to default Vehicle Model Successful\r\n"
+        # })
         return 0  
     
     if data["cmd"] == "list_python_packages":

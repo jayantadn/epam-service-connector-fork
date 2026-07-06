@@ -15,7 +15,7 @@ items:
     title: Kuksa Syncer
 
   sourceFolder: src/kuksa-syncer
-  version: 1.0.1
+  version: 1.0.2
 
   images:
   - archInfo:
