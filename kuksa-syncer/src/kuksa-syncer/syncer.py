@@ -860,9 +860,12 @@ async def main():
     await asyncio.gather(start_socketio(SERVER), ticker(), ticker_fast(), ticker_5s())
 
 if __name__ == "__main__":
-    # Copy signalss.json to writable partition
-    shutil.copy(mock_signal_read_ony_filename, mock_signal_path)
-    print("Copied signals.json to writable partition: " + mock_signal_path, flush=True)
+    # Copy signalss.json to writable partition only if absent
+    if not os.path.exists(mock_signal_path):
+        shutil.copy(mock_signal_read_ony_filename, mock_signal_path)
+        print("Copied signals.json to writable partition: " + mock_signal_path, flush=True)
+    else:
+        print("signals.json already exists in writable partition: " + mock_signal_path, flush=True)
 
     loop = asyncio.get_event_loop()
     try:
