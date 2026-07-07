@@ -96,18 +96,6 @@ dist/
 *.egg-info/
 pip-wheel-metadata/
 
-# Node.js dependencies (local dashboard runtime)
-node_modules/
-**/node_modules/
-
-# Node-RED auto-generated runtime state files (contain instance ID / credential secrets)
-hardware-sim/node-red/.config.runtime.json
-hardware-sim/node-red/.config.runtime.json.backup
-hardware-sim/node-red/.config.nodes.json
-hardware-sim/node-red/.config.users.json
-hardware-sim/node-red/.config.users.json.backup
-hardware-sim/node-red/flows_cred.json
-
 # ---------------------------------------------------------------------
 # SSH / keys / secrets
 # ---------------------------------------------------------------------
