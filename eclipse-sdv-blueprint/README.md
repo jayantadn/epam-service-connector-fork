@@ -255,7 +255,6 @@ For nodered hardware simulator there is helper script to launch [here](hardware-
 6. Monitor the application logs by running:
 	journalctl -f | grep "range-ext"
 7. Check the application level logs
-![Hardware simulator in action](./images/demo.gif)
 
 ### Signal Flow and Internals
 
