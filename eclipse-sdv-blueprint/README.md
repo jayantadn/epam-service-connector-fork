@@ -185,7 +185,7 @@ Phase 1 is designed for rapid application development and validation. By running
 
 ### Bind the service with subject in OEM portal to download to VM
 
-- Open [AOS cloud docs web protal](https://docs.aosedge.tech/docs/quick-start/) and install the certificate in the local VM.
+- Open [AOS cloud docs web protal](https://docs.aosedge.tech/docs/quick-start/) and install the certificate in the WSL.
 - Open [AOS Service provider(sp) web portal](https://api.aoscloud.io/account/start) click on SP and while login it will ask p12 certificate and provide sp.p12(aos-user-sp.p12) certificate.
 - Navigate to AosEdge Dashboard → SOTA/FOTA → Verification Batches.
 - Select the required service package to open the Package Details page.
@@ -202,7 +202,6 @@ Phase 1 is designed for rapid application development and validation. By running
 - Subject Creation and Service Assignment
 	- Navigate to AosEdge Dashboard → Units → Subjects.
 	- Click the "+" button to create a new subject.
-	- Enter a meaningful name for the subject and save it.
 	- In AosEdge Dashboard → Units → Subjects, select the newly created subject.
 	- Add the target Unit (Primary VM) to the subject.
 	- Add the required software service(s) to the subject and save the configuration.
@@ -214,9 +213,9 @@ Phase 1 is designed for rapid application development and validation. By running
 
 ### SDV-Application-Compilation-and-Configuration
 
-- Go to playground.digital.auto and sign in.
+- Go to playground.digital.auto and sign in.[link](https://playground.digital.auto)
 - Navigate to Vehicle Models.
-- Select the EPAM Integration vehicle model.
+- Select the EPAM Integration vehicle model.[link](https://playground.digital.auto/model/67f76c0d8c609a0027662a69)
 - Open PrototypeLibrary and choose the EV Range Extender application.
 - Click AOS Cloud Deployment to open the SDV application deployment page.
 - From the dropdown list of available SDV applications, select the desired application (for example, EV Range Extender).
@@ -231,6 +230,7 @@ Phase 1 is designed for rapid application development and validation. By running
 With both VMs running and the EV Range Extender application executed from the digital.auto playground against your registered runtime, launch the host-side hardware simulator (the Tk simulator) so you can drive the inputs manually:
 
 ```bash
+python3 -m pip install -r hardware-sim/requirements.txt
 ./hardware-sim/setup.sh
 python hardware-sim/pytk_hwsim.py
 ```
@@ -255,7 +255,6 @@ For nodered hardware simulator there is helper script to launch [here](hardware-
 6. Monitor the application logs by running:
 	journalctl -f | grep "range-ext"
 7. Check the application level logs
-
 ![Hardware simulator in action](./images/demo.gif)
 
 ### Signal Flow and Internals
