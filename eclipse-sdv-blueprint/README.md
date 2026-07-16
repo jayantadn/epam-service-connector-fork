@@ -99,8 +99,6 @@ Phase 1 is designed for rapid application development and validation. By running
 | `eclipse-kuksa` | Vehicle signal broker — reads and writes VSS signals |
 | `eclipse-zenoh` | Modern pub/sub communication protocol between HPC-VM and End-VM |
 
-### Automated setup (to be done)
-
 
 ### System Setup Workflow
 
@@ -111,11 +109,15 @@ The following section describes the end-to-end setup required to recreate the Ph
 - [Chapter 3 — Build and deploy the SDV application](#chapter-3--build-and-deploy-the-sdv-application)
 - [Chapter 4 — Run the demonstration](#chapter-4--run-the-demonstration)
 
-### Manual setup
+#### Automated setup
 
-## Chapter 1 — VM setup and deployment flow
+tbd
 
-### Prepare the VM environment
+#### Manual setup
+
+##### Chapter 1 — VM setup and deployment flow
+
+**Prepare the VM environment**
 - Download the latest AOS VM image package of bosch and provisioning script from the AOS Edge meta-aos-vm release page: [meta-aos-vm releases](https://github.com/aosedge/meta-aos-vm/releases/)
 - Extract the image archive and start the QEMU-based VMs from the same directory:
 
@@ -139,7 +141,7 @@ journalctl -f
 aos-prov provision -u 10.0.0.100
 ```
 
-### Install the required software layer
+**Install the required software layer**
 - Download the AOS VM layers package from the same release page: [aos-vm layers package](https://github.com/aosedge/meta-aos-vm/releases/download/v6.1.0-bosch.2/aos-vm-layers-genericx86-64-6.1.0-bosch.2.tar.gz)
 - Extract the archive and publish the layers using the signing flow:
 
@@ -150,7 +152,7 @@ aos-signer go
 - After the publish step, verify in the AOS Cloud Service Provider portal that the expected layers are available in the Layers section. The layers that should appear are `kuksa-client`, `zenoh`, and `pylibs`.
 - Confirm that the uploaded layer is available for the target units and that it can be pulled by the VM.
 
-### Deploy the demo services
+**Deploy the demo services**
 - Clone or access the demo-services repository from [demo-services](https://github.com/aosedge/demo-services.git).
 - The demo-services repository contains the deployment bundles for the EV Range Extender use case: `bms`, `range-ai`, `seat-ecu`, and `hvac`.
 - In the VM, navigate to the EV Range Extender service directory and package it for deployment:
@@ -161,9 +163,9 @@ aos-signer go
 ```
 - Confirm that these application are then downloaded by the target VM after the cloud-side deployment is configured.
 
-## Chapter 2 — OEM and service deployment setup on AOS Edge
+##### Chapter 2 — OEM and service deployment setup on AOS Edge
 
-### Configure the OEM target systems
+**Configure the OEM target systems**
 - Open the AOS documentation portal at [AOS Edge Quick Start](https://docs.aosedge.tech/docs/quick-start/) and install the required certificates in the environment where the deployment tools are used.
 - After this, create the required service and subject in the AOS dashboard so the deployment can be bound to the target VM which is followed on the aosedge quick start guide id not done .
 - Sign in to the AOS Service Provider or OEM portal at [AOS Cloud](https://api.aoscloud.io/account/start) and import the required `.p12` certificate, such as `aos-user-oem.p12` or `aos-user-sp.p12`.
@@ -174,7 +176,7 @@ aos-signer go
 - After this, create the required service and subject in the AOS dashboard so the deployment can be bound to the target VM.
   - Create the service from the Services section to define the software package to deploy.
 
-### Steps to Create a Service
+**Steps to Create a Service**
 
 1. Open the **Services** page.
 2. Click **Add Service**.
@@ -198,18 +200,19 @@ aos-signer go
   - Create the subject under Subjects, attach the target VM, and bind the service to it.
 - Follow the [AOS Edge Quick Start guide](https://docs.aosedge.tech/docs/quick-start/) if you need help with these steps.
 
-### Approve and bind the service
+**Approve and bind the service**
 - In AosEdge Dashboard → SOTA/FOTA → Verification Batches, open the package and approve it for deployment.
 - In AosEdge Dashboard → SOTA/FOTA → Deployment Bundles, confirm that the package is validated and available.
 - Observe the deployment process with `journalctl -f` on the VM and confirm that the service starts successfully.
 
-## Chapter 3 — Build and deploy the SDV application
+##### Chapter 3 — Build and deploy the SDV application
+
 - Sign in to the digital.auto Playground at [playground.digital.auto](https://playground.digital.auto).
 - Open the EV Range Extender application from the playground at [this link](https://playground.digital.auto/model/67f76c0d8c609a0027662a69/library/prototype/69ce30f438bb8e98f0af5ac8/view).
 - In the AOS Cloud Deployment view, first choose the C++ option, then select the EV Range Extender application from the dropdown menu, upload the required certificate, and click Build and Deploy.
 - Complete the post-deployment validation steps to ensure the application layer is available and the service is bound to the target unit.
 
-## Chapter 4 — Run the demonstration
+##### Chapter 4 — Run the demonstration
 - Start the hardware simulator from the repository by installing dependencies and launching the simulator:
 
 ```bash
@@ -228,11 +231,13 @@ journalctl -f | grep "range-ext"
 - Observe the expected threshold behavior at 50% and 30% battery charge and verify the corresponding HVAC and seat-control actions.
 
 
+
 ### Steps to demo
 1. Complete the "SDV-Application-Compilation-and-Configuration" steps
 1. Start the hardware simulator.
 2. Once the hardware simulator is running, launch the Playground application (SDV application).
 3. Click the Start button in the hardware simulator to begin battery discharge simulation.
+
 ### Observe the threshold-based behaviour:
 1. When the battery level reaches 50%, the HVAC fan is automatically turned off.
 2. When the battery level reaches 30%, additional power-saving measures are applied, and the seat heating/cooling functions are turned off.
