@@ -118,8 +118,11 @@ The following section describes the end-to-end setup required to recreate the Ph
 #### Prepare the VM environment
 - Download the latest AOS VM image package of bosch and provisioning script from the AOS Edge meta-aos-vm release page: [meta-aos-vm releases](https://github.com/aosedge/meta-aos-vm/releases/)
 - Extract the image archive and start the QEMU-based VMs from the same directory:
-  - `tar -xvf aos-vm-image-genericx86-64-6.1.0-bosch.2.tar.xz`
-  - `sudo ./aos_vm.sh run -f .`
+
+```bash
+tar -xvf aos-vm-image-genericx86-64-6.1.0-bosch.2.tar.xz
+sudo ./aos_vm.sh run -f .
+```
 - Access the primary node with `ssh root@10.0.0.100` and the secondary node with `ssh root@10.0.0.x`, where the address can be discovered with `ip neigh`.
 - Monitor the boot and service logs with `journalctl -f`.
 - Provision the primary VM to AOS Cloud with `aos-prov provision -u 10.0.0.100`.
@@ -127,8 +130,11 @@ The following section describes the end-to-end setup required to recreate the Ph
 #### Install the required software layer
 - Download the AOS VM layers package from the same release page: [aos-vm layers package](https://github.com/aosedge/meta-aos-vm/releases/download/v6.1.0-bosch.2/aos-vm-layers-genericx86-64-6.1.0-bosch.2.tar.gz)
 - Extract the archive and publish the layers using the signing flow:
-  - `tar -xvf aos-vm-layers-genericx86-64-6.1.0-bosch.2.tar.gz`
-  - `aos-signer go`
+
+```bash
+tar -xvf aos-vm-layers-genericx86-64-6.1.0-bosch.2.tar.gz
+aos-signer go
+```
 - After the publish step, verify in the AOS Cloud Service Provider portal that the expected layers are available in the Layers section. The layers that should appear are `kuksa-client`, `zenoh`, and `pylibs`.
 - Confirm that the uploaded layer is available for the target units and that it can be pulled by the VM.
 
@@ -136,8 +142,11 @@ The following section describes the end-to-end setup required to recreate the Ph
 - Clone or access the demo-services repository from [demo-services](https://github.com/aosedge/demo-services.git).
 - The demo-services repository contains the deployment bundles for the EV Range Extender use case: `bms`, `range-ai`, `seat-ecu`, and `hvac`.
 - In the VM, navigate to the EV Range Extender service directory and package it for deployment:
-  - `cd /path/to/demo-services/ev-range-extender`
-  - `aos-signer go`
+
+```bash
+cd /path/to/demo-services/ev-range-extender
+aos-signer go
+```
 - Confirm that these application are then downloaded by the target VM after the cloud-side deployment is configured.
 
 ### Chapter 2 — OEM and service deployment setup on AOS Edge
@@ -168,14 +177,20 @@ The following section describes the end-to-end setup required to recreate the Ph
 
 #### Chapter 4 — Run the demonstration
 - Start the hardware simulator from the repository by installing dependencies and launching the simulator:
-  - `python3 -m pip install -r hardware-sim/requirements.txt`
-  - `./hardware-sim/setup.sh`
-  - `python hardware-sim/pytk_hwsim.py`
+
+```bash
+python3 -m pip install -r hardware-sim/requirements.txt
+./hardware-sim/setup.sh
+python hardware-sim/pytk_hwsim.py
+```
 - If the simulator window does not appear correctly, relaunch the script.
 - Start the playground application, then click Start in the simulator to begin the battery-discharge flow.
 - Monitor the runtime logs on VM1 with:
-  - `ssh root@10.0.0.100`
-  - `journalctl -f | grep "range-ext"`
+
+```bash
+ssh root@10.0.0.100
+journalctl -f | grep "range-ext"
+```
 - Observe the expected threshold behavior at 50% and 30% battery charge and verify the corresponding HVAC and seat-control actions.
 
 
