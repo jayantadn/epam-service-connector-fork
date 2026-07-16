@@ -99,146 +99,85 @@ Phase 1 is designed for rapid application development and validation. By running
 | `eclipse-kuksa` | Vehicle signal broker — reads and writes VSS signals |
 | `eclipse-zenoh` | Modern pub/sub communication protocol between HPC-VM and End-VM |
 
+### Automated setup (to be done)
+
+
 ### System Setup Workflow
 
-- [QEMU VM's setup](#QEMU-VM's-setup)
-- [Install software layer](#Install-sofware-layer)
-- [Install necessory services(demo services) to QEMU-VM-1 and QEMU-VM-2](#Install-necessory-services(demo-services)-to-QEMU-VM-1-and-QEMU-VM-2)
-- [AOS cloud service provoder portal setup](#AOS-cloud-servce-provider-portal-setup)
-- [AOS cloud OEM provoder portal setup](#AOS-cloud-OEM-provoder-portal-setup)
-- [Configure the Aos Cloud OEM Target Systems](#Configure-the-Aos-Cloud-OEM-Target-Systems)
-- [Software Layer Verification and Unit Set Configuration](#Software-Layer-Verification-and-Unit-Set-Configuration)
-- [Bind the service with subject in OEM portal to download to VM](#Bind-the-service-with-subject-in-OEM-portal-to-download-to-VM)
-- [SDV Application Compilation and Configuration](#SDV-Application-Compilation-and-Configuration)  
-- [Start the hardware simulator](#start-the-hardware-simulator)  
-- [Steps to demo](#steps-to-demo)
+The following section describes the end-to-end setup required to recreate the Phase 1 demo from scratch. It is organized into sub-sections that guide the VM setup and deployment flow in a practical sequence.
 
-⚠️ Disclaimer: Please follow the above steps for clear setup and demo.
+- [Chapter 1 — VM setup and deployment flow](#chapter-1--vm-setup-and-deployment-flow)
+- [Chapter 2 — OEM and service deployment setup on AOS Edge](#chapter-2--oem-and-service-deployment-setup-on-aos-edge)
+- [Chapter 3 — Build and deploy the SDV application](#chapter-3--build-and-deploy-the-sdv-application)
+- [Chapter 4 — Run the demonstration](#chapter-4--run-the-demonstration)
 
-### QEMU-VM's-setup
-- Open [AOS edge meta-aos-vm releases](https://github.com/aosedge/meta-aos-vm/releases/)
-- Download [aos-vm-image-genericx86-64-6.1.0.bosch.2.tar.xz]( https://github.com/aosedge/meta-aos-vm/releases/download/v6.1.0-bosch.2/aos-vm-image-genericx86-64-6.1.0-bosch.2.tar.gz)
-- Download [aos_vm.sh](https://github.com/aosedge/meta-aos-vm/releases/download/v6.1.0-bosch.2/aos_vm.sh)
-- Extract the VM image package.
-	- tar -xvf aos-vm-image-genericx86-64-6.1.0-bosch.2.tar.xz
-- Start the QEMU VMs by executing the script from the same directory.
-	- ./aos_vm.sh run -f .
-- Log in to the main node.
-	- ssh root@10.0.0.100	
-- Log in to the secondary node.
-	- ssh root@10.0.0.x where x is assigned dynamically and can be determined using:*ip neigh*
-- After logging in to both VMs, monitor the system logs:
-	-journalctl -f
-- Provision the VMs to the AOS Cloud infrastructure by running the following command on the primary node:
-	- aos-prov provision -u 10.0.0.100
+### Manual setup
 
-### Install-sofware-layer
-- Open [AOS edge meta-aos-vm releases](https://github.com/aosedge/meta-aos-vm/releases/)
-- Download [aos-vm-layers-genericx86-64-6.1.0-bosch.2.tar.gz]( https://github.com/aosedge/meta-aos-vm/releases/download/v6.1.0-bosch.2/aos-vm-layers-genericx86-64-6.1.0-bosch.2.tar.gz)
+### Chapter 1 — VM setup and deployment flow
 
-- Extract the VM image package.
-	- tar -xvf aos-vm-layers-genericx86-64-6.1.0-bosch.2.tar.gz
-- After extracting the package, navigate to the layers directory and send packages to cloud
-	- aos-signer go
-- Once upload is sucessfull, it will be pushing to respective VM's based on config.yaml file.
+#### Prepare the VM environment
+- Download the latest AOS VM image package of bosch and provisioning script from the AOS Edge meta-aos-vm release page: [meta-aos-vm releases](https://github.com/aosedge/meta-aos-vm/releases/)
+- Extract the image archive and start the QEMU-based VMs from the same directory:
+  - `tar -xvf aos-vm-image-genericx86-64-6.1.0-bosch.2.tar.xz`
+  - `sudo ./aos_vm.sh run -f .`
+- Access the primary node with `ssh root@10.0.0.100` and the secondary node with `ssh root@10.0.0.x`, where the address can be discovered with `ip neigh`.
+- Monitor the boot and service logs with `journalctl -f`.
+- Provision the primary VM to AOS Cloud with `aos-prov provision -u 10.0.0.100`.
 
-### Install necessory services(demo-services) to QEMU-VM-1 and QEMU-VM-2 
-- Checkout [https://github.com/aosedge/demo-services.git] in the VM.
-- Go to the path [repo/demo-services/ev-range-extender] and send the packages to the cloud by giving command aos-signer go
-- Follow the step 
-	- "Verify software layer is downloaded"
-	- "Bind the service with subject in OEM portal to download to VM"
+#### Install the required software layer
+- Download the AOS VM layers package from the same release page: [aos-vm layers package](https://github.com/aosedge/meta-aos-vm/releases/download/v6.1.0-bosch.2/aos-vm-layers-genericx86-64-6.1.0-bosch.2.tar.gz)
+- Extract the archive and publish the layers using the signing flow:
+  - `tar -xvf aos-vm-layers-genericx86-64-6.1.0-bosch.2.tar.gz`
+  - `aos-signer go`
+- After the publish step, verify in the AOS Cloud Service Provider portal that the expected layers are available in the Layers section. The layers that should appear are `kuksa-client`, `zenoh`, and `pylibs`.
+- Confirm that the uploaded layer is available for the target units and that it can be pulled by the VM.
 
-### AOS-cloud-OEM-provoder-portal-setup
-- Open [AOS cloud docs web protal](https://docs.aosedge.tech/docs/quick-start/) and install the certificate in the local VM.
-- Open [AOS Service provider(sp) web portal](https://api.aoscloud.io/account/start), click on OEM and while login it will ask p12 certificate and provide oem.p12(aos-user-oem.p12) certificate.
+#### Deploy the demo services
+- Clone or access the demo-services repository from [demo-services](https://github.com/aosedge/demo-services.git).
+- The demo-services repository contains the deployment bundles for the EV Range Extender use case: `bms`, `range-ai`, `seat-ecu`, and `hvac`.
+- In the VM, navigate to the EV Range Extender service directory and package it for deployment:
+  - `cd /path/to/demo-services/ev-range-extender`
+  - `aos-signer go`
+- Confirm that these application are then downloaded by the target VM after the cloud-side deployment is configured.
 
-### Configure the Aos Cloud OEM Target Systems 
-- Open [AOS edge meta-aos-vm releases](https://github.com/aosedge/meta-aos-vm/releases/)
-- Download [unitconfig.json]( https://github.com/aosedge/meta-aos-vm/releases/download/v6.1.0-bosch.2/unitconfig.json)
-- In the AosEdge Dashboard, navigate to Unit Config.
-	- AosEdge Dashboard->UNIT CONFIG
-- Click the "+" (Add New Unit Configuration) button.
-- Open the downloaded unitconfig.json file, copy its contents, and paste them into the configuration editor.
-- Click Update to save the new unit configuration.
+### Chapter 2 — OEM and service deployment setup on AOS Edge
 
-### Software Layer Verification and Unit Set Configuration
-- Navigate to AosEdge Dashboard → SOTA/FOTA → Layers and verify that the software layer packages have been uploaded successfully.
-- In AosEdge Dashboard → SOTA/FOTA → Layers, verify that the software layer packages have been downloaded to the target VM.
-- Create a Unitset_Bosch unit set to bypass verification:
-	- Navigate to AosEdge Dashboard → Unit → Unit Sets.
-	- Click the "+" icon to create a new unit set.
-	- Configure the following settings:
-		- Title: Unitset_Bosch
-		- Description: Optional
-		- Update Strategy: Minimize Unit Restart
-		- Is Verification Set: Enable (set to True)
-	- Save the unit set.
-- Assign Unitset_Bosch to the provisioned VM:
-	- Navigate to AosEdge Dashboard → Unit → Units.
-	- Select the target VM by clicking its System ID.
-	- In the Unit Details page, click Manage Unit Sets.
-	- Add Unitset_Bosch to the unit and save the changes.
-- Verify that the assigned unit set is reflected in the VM configuration before proceeding with software deployment.
+#### Configure the OEM target systems
+- Open the AOS documentation portal at [AOS Edge Quick Start](https://docs.aosedge.tech/docs/quick-start/) and install the required certificates in the environment where the deployment tools are used.
+- After this, create the required service and subject in the AOS dashboard so the deployment can be bound to the target VM which is followed on the aosedge quick start guide id not done .
+- Sign in to the AOS Service Provider or OEM portal at [AOS Cloud](https://api.aoscloud.io/account/start) and import the required `.p12` certificate, such as `aos-user-oem.p12` or `aos-user-sp.p12`.
+- Download the unit configuration template from [unitconfig.json](https://github.com/aosedge/meta-aos-vm/releases/download/v6.1.0-bosch.2/unitconfig.json) and import it in AosEdge Dashboard →Target System →edit →UNIT CONFIG
+- Create the unit set `Unitset_Bosch` and assign it to the provisioned VM so verification does not block the demo deployment.
+  - Configure: Title `Unitset_Bosch`, Description `Optional`, Update Strategy `Minimize Unit Restart`, and enable `Is Verification Set`.
+  - Save the unit set, then open the target VM in AosEdge Dashboard → Units, select its details, and add `Unitset_Bosch` under Manage Unit Sets.
+- After this, create the required service and subject in the AOS dashboard so the deployment can be bound to the target VM.
+  - Create the service from the Services section to define the software package to deploy.
+  - Create the subject under Subjects, attach the target VM, and bind the service to it.
+- Follow the [AOS Edge Quick Start guide](https://docs.aosedge.tech/docs/quick-start/) if you need help with these steps.
 
-> Note: If verification is enabled through Unitset_Bosch, software layers can be deployed without additional verification checks during the update process.
+#### Approve and bind the service
+- In AosEdge Dashboard → SOTA/FOTA → Verification Batches, open the package and approve it for deployment.
+- In AosEdge Dashboard → SOTA/FOTA → Deployment Bundles, confirm that the package is validated and available.
+- Observe the deployment process with `journalctl -f` on the VM and confirm that the service starts successfully.
 
-### Bind the service with subject in OEM portal to download to VM
+#### Chapter 3 — Build and deploy the SDV application
+- Sign in to the digital.auto Playground at [playground.digital.auto](https://playground.digital.auto).
+- Open the EV Range Extender application from the playground at [this link](https://playground.digital.auto/model/67f76c0d8c609a0027662a69/library/prototype/69ce30f438bb8e98f0af5ac8/view).
+- In the AOS Cloud Deployment view, first choose the C++ option, then select the EV Range Extender application from the dropdown menu, upload the required certificate, and click Build and Deploy.
+- Complete the post-deployment validation steps to ensure the application layer is available and the service is bound to the target unit.
 
-- Open [AOS cloud docs web protal](https://docs.aosedge.tech/docs/quick-start/) and install the certificate in the WSL.
-- Open [AOS Service provider(sp) web portal](https://api.aoscloud.io/account/start) click on SP and while login it will ask p12 certificate and provide sp.p12(aos-user-sp.p12) certificate.
-- Navigate to AosEdge Dashboard → SOTA/FOTA → Verification Batches.
-- Select the required service package to open the Package Details page.
-- Click Update Approval.
-- Review and validate the package details.
-- Click Update Approval again to approve and validate the package.
-- Navigate to AosEdge Dashboard → SOTA/FOTA → Deployment Bundles.
-- Verify that the software service package has been successfully validated and is available for deployment
-- Confirm that the package status is updated to Validated or Approved before proceeding with deployment.
-- Verify that the deployment bundle contains the correct software service version.
+#### Chapter 4 — Run the demonstration
+- Start the hardware simulator from the repository by installing dependencies and launching the simulator:
+  - `python3 -m pip install -r hardware-sim/requirements.txt`
+  - `./hardware-sim/setup.sh`
+  - `python hardware-sim/pytk_hwsim.py`
+- If the simulator window does not appear correctly, relaunch the script.
+- Start the playground application, then click Start in the simulator to begin the battery-discharge flow.
+- Monitor the runtime logs on VM1 with:
+  - `ssh root@10.0.0.100`
+  - `journalctl -f | grep "range-ext"`
+- Observe the expected threshold behavior at 50% and 30% battery charge and verify the corresponding HVAC and seat-control actions.
 
-- Open [AOS cloud docs web protal](https://docs.aosedge.tech/docs/quick-start/) and install the certificate in the local VM.
-- Open [AOS Service provider(sp) web portal](https://api.aoscloud.io/account/start), click on OEM and while login it will ask p12 certificate and provide oem.p12(aos-user-oem.p12) certificate.
-- Subject Creation and Service Assignment
-	- Navigate to AosEdge Dashboard → Units → Subjects.
-	- Click the "+" button to create a new subject.
-	- In AosEdge Dashboard → Units → Subjects, select the newly created subject.
-	- Add the target Unit (Primary VM) to the subject.
-	- Add the required software service(s) to the subject and save the configuration.
-	- Once the subject is configured, the assigned service is automatically fetched by the AOS Core running on QEMU-VM-1.
-	- The service is then downloaded, configured, and started automatically on the VM.
-- Monitor the service deployment logs on QEMU-VM-1:
-	- journalctl -f
-- Verify that the service is running successfully and that no deployment errors are reported in the logs.
-
-### SDV-Application-Compilation-and-Configuration
-
-- Go to playground.digital.auto and sign in.[link](https://playground.digital.auto)
-- Navigate to Vehicle Models.
-- Select the EPAM Integration vehicle model.[link](https://playground.digital.auto/model/67f76c0d8c609a0027662a69)
-- Open PrototypeLibrary and choose the EV Range Extender application.
-- Click AOS Cloud Deployment to open the SDV application deployment page.
-- From the dropdown list of available SDV applications, select the desired application (for example, EV Range Extender).
-- Upload the aos-user-sp.p12 certificate.
-- Click Build and Deploy to start the deployment.
-- Complete the post-deployment steps:
-	- Verify that the software layer has been downloaded successfully.
-	- Bind the service with the subject in the OEM Portal and download it to the VM.
-
-### Start the hardware simulator
-
-With both VMs running and the EV Range Extender application executed from the digital.auto playground against your registered runtime, launch the host-side hardware simulator (the Tk simulator) so you can drive the inputs manually:
-
-```bash
-python3 -m pip install -r hardware-sim/requirements.txt
-./hardware-sim/setup.sh
-python hardware-sim/pytk_hwsim.py
-```
-⚠️ Disclaimer: Please follow the above steps , if pytek-simulator does not display the values, hwsim should be re-launched.
-
-See the [hardware simulator README](hardware-sim/README.md) for the full control and status map.
-
-For nodered hardware simulator there is helper script to launch [here](hardware-sim/node-red/README.md)
 
 ### Steps to demo
 1. Complete the "SDV-Application-Compilation-and-Configuration" steps
@@ -344,5 +283,5 @@ A key addition in Phase 2 is the **End ECU layer** (STM32), which represents the
 | digital.auto Playground | [playground.digital.auto](https://playground.digital.auto) |
 | Development Repository | [eclipse-autowrx/epam-service-connector](https://github.com/eclipse-autowrx/epam-service-connector) |
 | digital.auto Website | [www.digital.auto](https://www.digital.auto) |
-| Aos Cloud | https://api.aoscloud.io/account/start |
+| Aos Cloud | [AOS Cloud](https://api.aoscloud.io/account/start) |
 ---
