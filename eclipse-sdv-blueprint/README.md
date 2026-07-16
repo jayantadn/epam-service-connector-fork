@@ -102,12 +102,7 @@ Phase 1 is designed for rapid application development and validation. By running
 
 ### System Setup Workflow
 
-The following section describes the end-to-end setup required to recreate the Phase 1 demo from scratch. It is organized into sub-sections that guide the VM setup and deployment flow in a practical sequence.
-
-- [Chapter 1 — VM setup and deployment flow](#chapter-1--vm-setup-and-deployment-flow)
-- [Chapter 2 — OEM and service deployment setup on AOS Edge](#chapter-2--oem-and-service-deployment-setup-on-aos-edge)
-- [Chapter 3 — Build and deploy the SDV application](#chapter-3--build-and-deploy-the-sdv-application)
-- [Chapter 4 — Run the demonstration](#chapter-4--run-the-demonstration)
+This section describes the end-to-end setup required to recreate the Phase 1 demo from scratch.
 
 #### Automated setup
 
@@ -115,33 +110,49 @@ tbd
 
 #### Manual setup
 
-##### Chapter 1 — VM setup and deployment flow
+The setup is organized into sub-sections that guide the VM setup and deployment flow in a practical sequence.
+
+- [Section 1 — VM setup and deployment flow](#chapter-1--vm-setup-and-deployment-flow)
+- [Section 2 — AOSEdge setup](#chapter-2--oem-and-service-deployment-setup-on-aos-edge)
+- [Section 3 — Build and deploy the SDV application](#chapter-3--build-and-deploy-the-sdv-application)
+
+
+##### Section 1 — VM setup and deployment flow
 
 **Prepare the VM environment**
+
+This step sets up two qemu VM instances where the SDV application and its surrounding components are run.
+
 - Download the latest AOS VM image package of bosch and provisioning script from the AOS Edge meta-aos-vm release page: [meta-aos-vm releases](https://github.com/aosedge/meta-aos-vm/releases/)
+
 - Extract the image archive and start the QEMU-based VMs from the same directory:
 
 ```bash
 tar -xvf aos-vm-image-genericx86-64-6.1.0-bosch.2.tar.xz
 sudo ./aos_vm.sh run -f .
 ```
-- Access the primary node with `ssh root@10.0.0.100` and the secondary node with `ssh root@10.0.0.x`, where the address can be discovered with:
+
+- Access the VM1 with `ssh root@10.0.0.100` and the secondary node with `ssh root@10.0.0.x`, where the address can be discovered with:
 
 ```bash
 ip neigh
 ```
+
 - Monitor the boot and service logs with:
 
 ```bash
 journalctl -f
 ```
-- Provision the primary VM to AOS Cloud with:
+- Provision the VM1 to AOS Cloud with:
 
 ```bash
 aos-prov provision -u 10.0.0.100
 ```
 
-**Install the required software layer**
+**Install the core components**
+
+This step installs the core components e.g. `kuksa-client`, `zenoh`, and `pylibs`
+
 - Download the AOS VM layers package from the same release page: [aos-vm layers package](https://github.com/aosedge/meta-aos-vm/releases/download/v6.1.0-bosch.2/aos-vm-layers-genericx86-64-6.1.0-bosch.2.tar.gz)
 - Extract the archive and publish the layers using the signing flow:
 
@@ -153,6 +164,9 @@ aos-signer go
 - Confirm that the uploaded layer is available for the target units and that it can be pulled by the VM.
 
 **Deploy the demo services**
+
+This step deploys the components which produces the data required for the SDV application.
+
 - Clone or access the demo-services repository from [demo-services](https://github.com/aosedge/demo-services.git).
 - The demo-services repository contains the deployment bundles for the EV Range Extender use case: `bms`, `range-ai`, `seat-ecu`, and `hvac`.
 - In the VM, navigate to the EV Range Extender service directory and package it for deployment:
@@ -163,7 +177,7 @@ aos-signer go
 ```
 - Confirm that these application are then downloaded by the target VM after the cloud-side deployment is configured.
 
-##### Chapter 2 — OEM and service deployment setup on AOS Edge
+##### Section 2 — AOSEdge setup
 
 **Configure the OEM target systems**
 - Open the AOS documentation portal at [AOS Edge Quick Start](https://docs.aosedge.tech/docs/quick-start/) and install the required certificates in the environment where the deployment tools are used.
@@ -205,38 +219,25 @@ aos-signer go
 - In AosEdge Dashboard → SOTA/FOTA → Deployment Bundles, confirm that the package is validated and available.
 - Observe the deployment process with `journalctl -f` on the VM and confirm that the service starts successfully.
 
-##### Chapter 3 — Build and deploy the SDV application
+##### Section 3 — Build and deploy the SDV application
 
 - Sign in to the digital.auto Playground at [playground.digital.auto](https://playground.digital.auto).
 - Open the EV Range Extender application from the playground at [this link](https://playground.digital.auto/model/67f76c0d8c609a0027662a69/library/prototype/69ce30f438bb8e98f0af5ac8/view).
 - In the AOS Cloud Deployment view, first choose the C++ option, then select the EV Range Extender application from the dropdown menu, upload the required certificate, and click Build and Deploy.
 - Complete the post-deployment validation steps to ensure the application layer is available and the service is bound to the target unit.
-
-##### Chapter 4 — Run the demonstration
-- Start the hardware simulator from the repository by installing dependencies and launching the simulator:
-
-```bash
-python3 -m pip install -r hardware-sim/requirements.txt
-./hardware-sim/setup.sh
-python hardware-sim/pytk_hwsim.py
-```
-- If the simulator window does not appear correctly, relaunch the script.
-- Start the playground application, then click Start in the simulator to begin the battery-discharge flow.
 - Monitor the runtime logs on VM1 with:
 
 ```bash
 ssh root@10.0.0.100
 journalctl -f | grep "range-ext"
 ```
-- Observe the expected threshold behavior at 50% and 30% battery charge and verify the corresponding HVAC and seat-control actions.
-
 
 
 ### Steps to demo
 1. Complete the "SDV-Application-Compilation-and-Configuration" steps
-1. Start the hardware simulator.
-2. Once the hardware simulator is running, launch the Playground application (SDV application).
-3. Click the Start button in the hardware simulator to begin battery discharge simulation.
+1. Start the hardware simulator (hardware-sim/pytk_hwsim.py).
+1. Once the hardware simulator is running, launch the Playground application (SDV application).
+1. Click the Start button in the hardware simulator to begin battery discharge simulation.
 
 ### Observe the threshold-based behaviour:
 1. When the battery level reaches 50%, the HVAC fan is automatically turned off.
@@ -274,6 +275,8 @@ The demo runs as a closed loop across host, virtual machines, and the playground
 Phase 2 replaces the virtual machines with **automotive hardware**. The cloud layer and application logic stay identical — this phase validates that the same software runs correctly on the hardware an OEM would actually put in a vehicle.
 
 A key addition in Phase 2 is the **End ECU layer** (STM32), which represents the deepest level of the vehicle's electrical architecture — the microcontrollers directly attached to physical sensors and actuators like motors, lights, and HVAC.
+
+**Note**: Phase 2 is still under development and is not ready for trial.
 
 ### How the flow works
 
