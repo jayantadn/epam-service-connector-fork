@@ -123,9 +123,21 @@ The following section describes the end-to-end setup required to recreate the Ph
 tar -xvf aos-vm-image-genericx86-64-6.1.0-bosch.2.tar.xz
 sudo ./aos_vm.sh run -f .
 ```
-- Access the primary node with `ssh root@10.0.0.100` and the secondary node with `ssh root@10.0.0.x`, where the address can be discovered with `ip neigh`.
-- Monitor the boot and service logs with `journalctl -f`.
-- Provision the primary VM to AOS Cloud with `aos-prov provision -u 10.0.0.100`.
+- Access the primary node with `ssh root@10.0.0.100` and the secondary node with `ssh root@10.0.0.x`, where the address can be discovered with:
+
+```bash
+ip neigh
+```
+- Monitor the boot and service logs with:
+
+```bash
+journalctl -f
+```
+- Provision the primary VM to AOS Cloud with:
+
+```bash
+aos-prov provision -u 10.0.0.100
+```
 
 ### Install the required software layer
 - Download the AOS VM layers package from the same release page: [aos-vm layers package](https://github.com/aosedge/meta-aos-vm/releases/download/v6.1.0-bosch.2/aos-vm-layers-genericx86-64-6.1.0-bosch.2.tar.gz)
@@ -161,6 +173,28 @@ aos-signer go
   - Save the unit set, then open the target VM in AosEdge Dashboard → Units, select its details, and add `Unitset_Bosch` under Manage Unit Sets.
 - After this, create the required service and subject in the AOS dashboard so the deployment can be bound to the target VM.
   - Create the service from the Services section to define the software package to deploy.
+
+### Steps to Create a Service
+
+1. Open the **Services** page.
+2. Click **Add Service**.
+3. Enter the following details:
+   - **Title:** `NUC service`
+   - **Codename:** `f28be5f0-3b9c-4f99-84ba-875cc18f5def` (auto-generated)
+   - **Description:** `Service for NUC box`
+4. Configure the **Default Quotas**:
+   - **CPU DMIPS:** `10000`
+   - **RAM:** `97656.25 KiB`
+   - **Process Limits (Optional):**
+     - **PIDs:** Leave blank (default)
+     - **nofile:** Leave blank (default)
+   - **Storage Limits:**
+     - **Storage:** `19531.25 KiB`
+     - **State:** `500000 B`
+     - **tmp:** `200000 B`
+5. Review the configuration.
+6. Click **Create** (or **Save**) to register the service.
+
   - Create the subject under Subjects, attach the target VM, and bind the service to it.
 - Follow the [AOS Edge Quick Start guide](https://docs.aosedge.tech/docs/quick-start/) if you need help with these steps.
 
@@ -205,9 +239,15 @@ journalctl -f | grep "range-ext"
 3. When the HVAC fan is turned off, a slight increase in the estimated driving range can be observed.
 4. When the seat heating/cooling functions are also disabled, the estimated driving range increases furthe
 5. Log in to QEMU-VM-1 using SSH:
-	ssh root@10.0.0.100
+
+```bash
+ssh root@10.0.0.100
+```
 6. Monitor the application logs by running:
-	journalctl -f | grep "range-ext"
+
+```bash
+journalctl -f | grep "range-ext"
+```
 7. Check the application level logs
 
 ### Signal Flow and Internals
