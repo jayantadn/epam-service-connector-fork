@@ -128,7 +128,7 @@ This step sets up two qemu VM instances where the SDV application and its surrou
 - Extract the image archive and start the QEMU-based VMs from the same directory:
 
 ```bash
-tar -xvf aos-vm-image-genericx86-64-6.1.0-bosch.2.tar.xz
+tar -xvf aos-vm-image-genericx86-64-6.1.1-bosch.1.tar.xz
 sudo ./aos_vm.sh run -f .
 ```
 
@@ -153,11 +153,11 @@ aos-prov provision -u 10.0.0.100
 
 This step installs the core components e.g. `kuksa-client`, `zenoh`, and `pylibs`
 
-- Download the AOS VM layers package from the same release page: [aos-vm layers package](https://github.com/aosedge/meta-aos-vm/releases/download/v6.1.0-bosch.2/aos-vm-layers-genericx86-64-6.1.0-bosch.2.tar.gz)
+- Download the AOS VM layers package from the same release page: [aos-vm layers package](https://github.com/aosedge/meta-aos-vm/releases/download/v6.1.1-bosch.1/aos-vm-layers-genericx86-64-6.1.1-bosch.1.tar.gz)
 - Extract the archive and publish the layers using the signing flow:
 
 ```bash
-tar -xvf aos-vm-layers-genericx86-64-6.1.0-bosch.2.tar.gz
+tar -xvf aos-vm-layers-genericx86-64-6.1.1-bosch.1.tar.gz
 aos-signer go
 ```
 - After the publish step, verify in the AOS Cloud Service Provider portal that the expected layers are available in the Layers section. The layers that should appear are `kuksa-client`, `zenoh`, and `pylibs`.
@@ -176,7 +176,7 @@ cd /path/to/demo-services/ev-range-extender
 aos-signer go
 ```
 - Confirm that these application are then downloaded by the target VM after the cloud-side deployment is configured.
-
+If Unit shown offline on AOS Dashboard follow the [Debug Steps]()
 ##### Section 2 — AOSEdge setup
 
 **Configure the OEM target systems**
@@ -293,6 +293,8 @@ A key addition in Phase 2 is the **End ECU layer** (STM32), which represents the
 | `Vehicle.Cabin.Seat.Ventilation.Level` | End ECU | Disable seat ventilation |
 
 > **For OEMs:** Phase 2 is where you validate that the app behaviour confirmed in the Playground and Phase 1 translates faithfully onto your target hardware. The signal list above represents exactly the vehicle capabilities your app will control in a real car.
+
+### Debug Steps
 
 ### Additional Eclipse components inside the blueprint phase 2
 
