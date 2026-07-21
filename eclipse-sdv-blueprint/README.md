@@ -128,9 +128,11 @@ This step sets up two qemu VM instances where the SDV application and its surrou
 - Extract the image archive and start the QEMU-based VMs from the same directory:
 
 ```bash
+source ~/.aos/venv/bin/activate
 tar -xvf aos-vm-image-genericx86-64-6.1.1-bosch.1.tar.xz
 sudo ./aos_vm.sh run -f .
 ```
+- If the AOS certificates are unavailable or the setup has not been completed, please follow the steps on[Aos QuickStart](https://docs.aosedge.tech/docs/quick-start/set-up/)
 
 - Access the VM1 with `ssh root@10.0.0.100` and the secondary node with `ssh root@10.0.0.x`, where the address can be discovered with:
 
@@ -148,7 +150,7 @@ journalctl -f
 ```bash
 aos-prov provision -u 10.0.0.100
 ```
-
+If Unit shown offline on AOS Dashboard follow the [Debug Steps](#debug-steps-for-network-on-vms)
 **Install the core components**
 
 This step installs the core components e.g. `kuksa-client`, `zenoh`, and `pylibs`
@@ -160,6 +162,7 @@ This step installs the core components e.g. `kuksa-client`, `zenoh`, and `pylibs
 tar -xvf aos-vm-layers-genericx86-64-6.1.1-bosch.1.tar.gz
 aos-signer go
 ```
+
 - After the publish step, verify in the AOS Cloud Service Provider portal that the expected layers are available in the Layers section. The layers that should appear are `kuksa-client`, `zenoh`, and `pylibs`.
 - Confirm that the uploaded layer is available for the target units and that it can be pulled by the VM.
 
@@ -176,29 +179,39 @@ cd /path/to/demo-services/ev-range-extender
 aos-signer go
 ```
 - Confirm that these application are then downloaded by the target VM after the cloud-side deployment is configured.
-If Unit shown offline on AOS Dashboard follow the [Debug Steps]()
+
 ##### Section 2 — AOSEdge setup
 
 **Configure the OEM target systems**
 - Open the AOS documentation portal at [AOS Edge Quick Start](https://docs.aosedge.tech/docs/quick-start/) and install the required certificates in the environment where the deployment tools are used.
 - After this, create the required service and subject in the AOS dashboard so the deployment can be bound to the target VM which is followed on the aosedge quick start guide id not done .
 - Sign in to the AOS Service Provider or OEM portal at [AOS Cloud](https://api.aoscloud.io/account/start) and import the required `.p12` certificate, such as `aos-user-oem.p12` or `aos-user-sp.p12`.
-- Download the unit configuration template from [unitconfig.json](https://github.com/aosedge/meta-aos-vm/releases/download/v6.1.0-bosch.2/unitconfig.json) and import it in AosEdge Dashboard →Target System →edit →UNIT CONFIG
+- Download the unit configuration template from [unitconfig.json](https://github.com/aosedge/meta-aos-vm/blob/demo_bosch/misc/unitconfig.json) and import it in AosEdge Dashboard →Target System →edit →UNIT CONFIG
 - Create the unit set `Unitset_Bosch` and assign it to the provisioned VM so verification does not block the demo deployment.
   - Configure: Title `Unitset_Bosch`, Description `Optional`, Update Strategy `Minimize Unit Restart`, and enable `Is Verification Set`.
   - Save the unit set, then open the target VM in AosEdge Dashboard → Units, select its details, and add `Unitset_Bosch` under Manage Unit Sets.
 - After this, create the required service and subject in the AOS dashboard so the deployment can be bound to the target VM.
   - Create the service from the Services section to define the software package to deploy.
 
-
-
   - Create the subject under Subjects, attach the target VM, and bind the service to it.
 - Follow the [AOS Edge Quick Start guide](https://docs.aosedge.tech/docs/quick-start/) if you need help with these steps.
 
 **Approve and bind the service**
+
 - In AosEdge Dashboard → SOTA/FOTA → Verification Batches, open the package and approve it for deployment.
 - In AosEdge Dashboard → SOTA/FOTA → Deployment Bundles, confirm that the package is validated and available.
 - Observe the deployment process with `journalctl -f` on the VM and confirm that the service starts successfully.
+
+**Playground Dashboard Connectivity**
+
+Clone this repo [Kuksa-syncer](https://github.com/oleh-mykytiuk/epam-service-connector-fork.git)
+
+```bash
+git checkout kuksa-syncer-aos
+cd kuksa-syncer
+aos-signer go
+```
+- please check for deployment successed on Aos-Dashboard on SOTA/FOTA -> Deployment bundles if fails try changing version the config.yaml of kuksa-syncer
 
 ##### Section 3 — Build and deploy the SDV application
 
@@ -213,10 +226,9 @@ ssh root@10.0.0.100
 journalctl -f | grep "range-ext"
 ```
 
-
 ### Steps to demo
 1. Complete the "SDV-Application-Compilation-and-Configuration" steps
-1. Start the hardware simulator (hardware-sim/pytk_hwsim.py).
+1. Start the hardware simulator by running `./hardware-sim/pytk_hwsim.py` from the `eclipse-sdv-blueprint` directory (see `hardware-sim/README.md`).
 1. Once the hardware simulator is running, launch the Playground application (SDV application).
 1. Click the Start button in the hardware simulator to begin battery discharge simulation.
 
@@ -294,7 +306,54 @@ A key addition in Phase 2 is the **End ECU layer** (STM32), which represents the
 
 > **For OEMs:** Phase 2 is where you validate that the app behaviour confirmed in the Playground and Phase 1 translates faithfully onto your target hardware. The signal list above represents exactly the vehicle capabilities your app will control in a real car.
 
-### Debug Steps
+### Debug steps for network on VM's
+
+Before performing these checks, verify the bridge and external interface names on your host and replace `aos-br0` / `eth0` if they differ.
+
+2. Check the bridge and IP forwarding still exist
+
+```bash
+ip addr show aos-br0
+cat /proc/sys/net/ipv4/ip_forward
+```
+
+This should show `10.0.0.1/24` on the bridge and `1` for forwarding. If forwarding shows `0`:
+
+```bash
+sudo sysctl -w net.ipv4.ip_forward=1
+```
+
+3. Check MASQUERADE rule exists (this is the one that keeps disappearing)
+
+```bash
+sudo iptables -t nat -L POSTROUTING -n -v
+```
+
+If it's empty, re-add it using your external interface name instead of `eth0`:
+
+```bash
+sudo iptables -t nat -A POSTROUTING -o <external-interface> -j MASQUERADE
+```
+
+4. Check FORWARD chain allows traffic both ways
+
+```bash
+sudo iptables -L FORWARD -n -v
+```
+
+It should show `aos-br0→<external-interface> ACCEPT` and `<external-interface>→aos-br0 ACCEPT` with state `RELATED,ESTABLISHED`. If missing:
+
+```bash
+sudo iptables -A FORWARD -i aos-br0 -o <external-interface> -j ACCEPT
+sudo iptables -A FORWARD -i <external-interface> -o aos-br0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+```
+
+Use the actual interface name on your machine, for example `eth0`, `ens33`, `enp3s0`, or another host-facing NIC.
+
+**Debug Steps for Application Deployment**
+
+
+
 
 ### Additional Eclipse components inside the blueprint phase 2
 

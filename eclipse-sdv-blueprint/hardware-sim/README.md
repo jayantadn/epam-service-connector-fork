@@ -71,7 +71,7 @@ Install the host dependencies, then run the dashboard from this directory:
 cd path/to/eclipse-sdv-blueprint/hardware-sim
 ./setup.sh
 python3 -m pip install -r requirements.txt
-python3 pytk_dashboard.py
+python3 pytk_hwsim.py
 ```
 
 `setup.sh` installs the Tk runtime package required by the dashboard UI:
