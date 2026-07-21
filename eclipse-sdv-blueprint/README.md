@@ -179,6 +179,12 @@ cd /path/to/demo-services/ev-range-extender
 aos-signer go
 ```
 - Confirm that these application are then downloaded by the target VM after the cloud-side deployment is configured.
+- Check application deployment on both VMs using
+
+```bash
+crun --root=/run/crun list
+```
+- If it return nothing on both VMs follow [Debug Steps for Application Deployment](#debug-steps-for-application-deployment)
 
 ##### Section 2 — AOSEdge setup
 
@@ -190,11 +196,11 @@ aos-signer go
 - Create the unit set `Unitset_Bosch` and assign it to the provisioned VM so verification does not block the demo deployment.
   - Configure: Title `Unitset_Bosch`, Description `Optional`, Update Strategy `Minimize Unit Restart`, and enable `Is Verification Set`.
   - Save the unit set, then open the target VM in AosEdge Dashboard → Units, select its details, and add `Unitset_Bosch` under Manage Unit Sets.
-- After this, create the required service and subject in the AOS dashboard so the deployment can be bound to the target VM.
-  - Create the service from the Services section to define the software package to deploy.
+  - Create the subject(aos-bosch) under Subjects on OEM, attach the target VM, and bind the service to it.
+  - add the respective unit to subject.
+  - On service add the services that are deployed `Range-Ai`,`Seat ECU`,`HVAC ECU`and `BMS`.
 
-  - Create the subject under Subjects, attach the target VM, and bind the service to it.
-- Follow the [AOS Edge Quick Start guide](https://docs.aosedge.tech/docs/quick-start/) if you need help with these steps.
+  - After creating the required unit_set and subject in the AOS dashboard, deployment can be bound to the target VM and services will be deployed on respective VM's.
 
 **Approve and bind the service**
 
@@ -204,14 +210,16 @@ aos-signer go
 
 **Playground Dashboard Connectivity**
 
-Clone this repo [Kuksa-syncer](https://github.com/oleh-mykytiuk/epam-service-connector-fork.git)
+Clone this repo [Kuksa-syncer](https://github.com/oleh-mykytiuk/epam-service-connector-fork.git) 
 
 ```bash
 git checkout kuksa-syncer-aos
 cd kuksa-syncer
 aos-signer go
 ```
+- add the service to created Subject(aos-bosch).
 - please check for deployment successed on Aos-Dashboard on SOTA/FOTA -> Deployment bundles if fails try changing version the config.yaml of kuksa-syncer
+- Add the create kuksa-syncer service to subject(aos-bosch).
 
 ##### Section 3 — Build and deploy the SDV application
 
@@ -219,6 +227,7 @@ aos-signer go
 - Open the EV Range Extender application from the playground at [this link](https://playground.digital.auto/model/67f76c0d8c609a0027662a69/library/prototype/69ce30f438bb8e98f0af5ac8/view).
 - In the AOS Cloud Deployment view, first choose the C++ option, then select the EV Range Extender application from the dropdown menu, upload the required certificate, and click Build and Deploy.
 - Complete the post-deployment validation steps to ensure the application layer is available and the service is bound to the target unit.
+- Add the EV-range-extender service to Subject (aos-bosch).
 - Monitor the runtime logs on VM1 with:
 
 ```bash
@@ -350,10 +359,37 @@ sudo iptables -A FORWARD -i <external-interface> -o aos-br0 -m state --state REL
 
 Use the actual interface name on your machine, for example `eth0`, `ens33`, `enp3s0`, or another host-facing NIC.
 
-**Debug Steps for Application Deployment**
+### Debug Steps for Application Deployment
 
+1. SSH into the VM where the application is running. For example:
 
+```bash
+ssh ubuntu@10.0.0.100
+```
 
+2. Open `/etc/hosts` for editing with `vi`:
+
+```bash
+sudo vi /etc/hosts
+```
+
+3. Add the following entry to the file:
+
+```text
+10.0.0.100 main
+```
+
+4. Save and exit `vi`:
+
+- press `Esc`
+- type `:wq`
+- press `Enter`
+
+5. Verify DNS resolution for `main`:
+
+```bash
+nslookup main
+```
 
 ### Additional Eclipse components inside the blueprint phase 2
 
