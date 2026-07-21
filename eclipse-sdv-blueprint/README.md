@@ -190,26 +190,7 @@ aos-signer go
 - After this, create the required service and subject in the AOS dashboard so the deployment can be bound to the target VM.
   - Create the service from the Services section to define the software package to deploy.
 
-**Steps to Create a Service**
 
-1. Open the **Services** page.
-2. Click **Add Service**.
-3. Enter the following details:
-   - **Title:** `NUC service`
-   - **Codename:** `f28be5f0-3b9c-4f99-84ba-875cc18f5def` (auto-generated)
-   - **Description:** `Service for NUC box`
-4. Configure the **Default Quotas**:
-   - **CPU DMIPS:** `10000`
-   - **RAM:** `97656.25 KiB`
-   - **Process Limits (Optional):**
-     - **PIDs:** Leave blank (default)
-     - **nofile:** Leave blank (default)
-   - **Storage Limits:**
-     - **Storage:** `19531.25 KiB`
-     - **State:** `500000 B`
-     - **tmp:** `200000 B`
-5. Review the configuration.
-6. Click **Create** (or **Save**) to register the service.
 
   - Create the subject under Subjects, attach the target VM, and bind the service to it.
 - Follow the [AOS Edge Quick Start guide](https://docs.aosedge.tech/docs/quick-start/) if you need help with these steps.
