@@ -4,6 +4,9 @@
 
 This is a copy of the original [Kuksa Syncer](https://github.com/eclipse-autowrx/sdv-runtime/tree/main/kuksa-syncer) with some modifications to run on Aos unit.
 
+See [CHANGES.md](CHANGES.md) for the list of local modifications
+(logging, VSS path alias layer, non-blocking subscribe, etc.).
+
 
 ## Service communication architecture
 

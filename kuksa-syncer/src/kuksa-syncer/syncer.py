@@ -52,6 +52,107 @@ client = VSSClient(BORKER_IP, BROKER_PORT)
 mock_signal_read_ony_filename = "signals.json"   # Writable volume is /storage
 mock_signal_path = "/storage/signals.json"   # Writable volume is /storage
 
+# ---------------------------------------------------------------------------
+# VSS path alias layer
+# ---------------------------------------------------------------------------
+# The Digital Auto playground/dashboard uses recent VSS path names (e.g.
+# Vehicle.Cabin.Seat.Row1.DriverSide.Heating) while the Kuksa databroker on
+# this unit may have an older VSS loaded (e.g. Vehicle.Cabin.Seat.Row1.Pos1.
+# Heating). We keep a per-process map from the dashboard-facing path to the
+# actual databroker path. Everything sent back to the kit server is keyed by
+# the dashboard path, so widgets keep working transparently.
+#
+# A value of None in the map is a "negative" entry meaning: we probed the
+# databroker and no candidate worked, don't probe again.
+path_alias_map = {}
+
+# Set of paths currently being resolved by a background task, to avoid
+# scheduling duplicate resolutions from ticker_fast.
+_alias_resolution_in_flight = set()
+
+# Optional static overrides supplied via env var, e.g.
+#   KUKSA_PATH_ALIASES='{"Vehicle.A.B":"Vehicle.X.Y"}'
+_static_aliases_env = os.getenv("KUKSA_PATH_ALIASES", "")
+if _static_aliases_env:
+    try:
+        _static_aliases = json.loads(_static_aliases_env)
+        if isinstance(_static_aliases, dict):
+            path_alias_map.update({str(k): str(v) for k, v in _static_aliases.items()})
+            print("[SYNCER] Loaded " + str(len(path_alias_map)) +
+                  " static VSS path alias(es) from KUKSA_PATH_ALIASES", flush=True)
+    except Exception as _e:
+        print("[SYNCER] Failed to parse KUKSA_PATH_ALIASES: " + str(_e), flush=True)
+
+
+def _generate_path_candidates(path):
+    """Yield legacy-style candidates for a dashboard-facing VSS path.
+
+    Currently handles the VSS >=4.3 seat-side renaming
+        DriverSide   -> Pos1
+        PassengerSide-> Pos2
+    Extend here if other renamings appear.
+    """
+    if ".DriverSide." in path:
+        yield path.replace(".DriverSide.", ".Pos1.")
+    if ".PassengerSide." in path:
+        yield path.replace(".PassengerSide.", ".Pos2.")
+    # Row2 sometimes uses Middle in newer specs but Pos2 in older; keep here
+    # in case the databroker exposes only Pos2.
+    if ".Middle." in path:
+        yield path.replace(".Middle.", ".Pos2.")
+
+
+def _resolve_databroker_path(kclient, dashboard_path):
+    """Return the actual databroker path for a dashboard path, or None.
+
+    Results are memoized in path_alias_map so we only probe once per path.
+    A cached None means "already probed, nothing works".
+    """
+    if dashboard_path in path_alias_map:
+        return path_alias_map[dashboard_path]
+
+    # First try the path as-is.
+    try:
+        md = kclient.get_metadata([dashboard_path])
+        if md is not None:
+            path_alias_map[dashboard_path] = dashboard_path
+            return dashboard_path
+    except Exception:
+        pass
+
+    # Then try known legacy candidates.
+    for candidate in _generate_path_candidates(dashboard_path):
+        try:
+            md = kclient.get_metadata([candidate])
+            if md is not None:
+                path_alias_map[dashboard_path] = candidate
+                print("[SYNCER] path alias: '" + dashboard_path +
+                      "' -> '" + candidate + "'", flush=True)
+                return candidate
+        except Exception:
+            continue
+
+    # Cache the negative result so ticker_fast doesn't keep re-probing.
+    path_alias_map[dashboard_path] = None
+    return None
+
+
+def _resolve_alias_blocking(dashboard_path):
+    """Blocking resolver used from a thread (run_in_executor).
+
+    Opens its own short-lived KClient so we never share a sync client across
+    threads.
+    """
+    if dashboard_path in path_alias_map:
+        return path_alias_map[dashboard_path]
+    try:
+        with KClient(BORKER_IP, BROKER_PORT) as kclient:
+            return _resolve_databroker_path(kclient, dashboard_path)
+    except Exception as e:
+        print("[SYNCER] alias resolver: KClient error for " + str(dashboard_path) +
+              ": " + str(e), flush=True)
+        return None
+
 def is_process_running_nix(process_name):
     """Check if a process with the given name is running on Linux/macOS."""
     try:
@@ -142,11 +243,20 @@ async def install_dependencies(request_from):
 
 @sio.event
 async def connect():
-    print('Connected to Kit Server ',flush=True)
+    print('[SYNCER] Connected to Kit Server. Registering as kit_id=' + str(CLIENT_ID), flush=True)
     await sio.emit("register_kit", {
         "kit_id": CLIENT_ID,
         "name": CLIENT_ID
     })
+    print('[SYNCER] register_kit emitted', flush=True)
+
+@sio.event
+async def disconnect():
+    print('[SYNCER] Disconnected from Kit Server', flush=True)
+
+@sio.event
+async def connect_error(data):
+    print('[SYNCER] Kit Server connect_error: ' + str(data), flush=True)
 
 def wait_for_databroker_ready(max_attempts=10, sleep_time=0.5):
     for attempt in range(max_attempts):
@@ -204,8 +314,11 @@ async def install_dependencies(request_from):
 
 @sio.event
 async def messageToKit(data):
-    # print("SYNCER: Command received from server",flush=True)
-    # print(data,flush=True)
+    try:
+        print("[SYNCER] messageToKit cmd=" + str(data.get("cmd")) +
+              " request_from=" + str(data.get("request_from")), flush=True)
+    except Exception:
+        print("[SYNCER] messageToKit received (unparseable data)", flush=True)
     if data["cmd"] in ("deploy_request", "deploy-request"):
         print("Receive deploy_request...")
         request_from =  data["request_from"]
@@ -232,29 +345,49 @@ async def messageToKit(data):
         if data["apis"] is not None:
             apis = data["apis"]
             master_id=data["request_from"]
+            print("[SYNCER] subscribe_apis from=" + str(master_id) +
+                  " count=" + str(len(apis) if isinstance(apis, list) else 'n/a') +
+                  " apis=" + str(apis), flush=True)
             lsOfApiSubscriber[master_id] = {
                 "from": time.time(),
-                "apis": apis
+                "apis": apis,
+                "first_emit_logged": False,
             }
+            print("[SYNCER] active subscribers=" + str(len(lsOfApiSubscriber)), flush=True)
 
-            if isinstance(apis,list) and len(apis)>0:
-                try:
-                    appendMockSignal(apis)
-                except Exception as e:
-                    print("Error: ", str(e))
-                    pass
-            
+            # Reply to the kit server IMMEDIATELY so the dashboard knows the
+            # subscription is registered. Metadata probing (which is a blocking
+            # gRPC call) is done off the event loop below so it can never stall
+            # ticker_fast or socket.io.
             await sio.emit("messageToKit-kitReply", {
                 "kit_id": CLIENT_ID,
                 "request_from": data["request_from"],
                 "cmd": "subscribe_apis",
                 "result": "Successful"
             })
+
+            if isinstance(apis, list) and len(apis) > 0:
+                async def _do_append(_apis):
+                    loop = asyncio.get_running_loop()
+                    try:
+                        t0 = time.time()
+                        await loop.run_in_executor(None, appendMockSignal, _apis)
+                        print("[SYNCER] appendMockSignal finished in " +
+                              ("%.2f" % (time.time() - t0)) + "s", flush=True)
+                    except Exception as e:
+                        print("[SYNCER] appendMockSignal error: " + str(e), flush=True)
+                asyncio.create_task(_do_append(list(apis)))
+        else:
+            print("[SYNCER] subscribe_apis received with apis=None", flush=True)
         return 0
     
     if data["cmd"] == "unsubscribe_apis":
         master_id=data["request_from"]
-        del lsOfApiSubscriber[master_id]
+        print("[SYNCER] unsubscribe_apis from=" + str(master_id), flush=True)
+        if master_id in lsOfApiSubscriber:
+            del lsOfApiSubscriber[master_id]
+        else:
+            print("[SYNCER] unsubscribe_apis: no such subscriber", flush=True)
         await sio.emit("messageToKit-kitReply", {
             "kit_id": CLIENT_ID,
             "request_from": data["request_from"],
@@ -619,32 +752,67 @@ def restartMockProvider():
 def appendMockSignal(signals):
     if signals is None or len(signals) <=0:
         return 0
+    print("[SYNCER] appendMockSignal: checking " + str(len(signals)) +
+          " signal(s) against databroker " + str(BORKER_IP) + ":" + str(BROKER_PORT), flush=True)
     hasNew = False
-    with KClient(BORKER_IP, BROKER_PORT) as kclient:
+    try:
+        kclient_ctx = KClient(BORKER_IP, BROKER_PORT)
+    except Exception as e:
+        print("[SYNCER] appendMockSignal: cannot create KClient: " + str(e), flush=True)
+        return 0
+    with kclient_ctx as kclient:
         with open(mock_signal_path,'r+') as f:
             content = f.read()
-            # print(f"mock file content")
             if len(content) == 0 :
                 content = "[]"
-            # print(content)
             cur_mocks = json.loads(content)
             cur_mock_names = []
             for cur_mock in cur_mocks:
                 cur_mock_names.append(cur_mock["signal"])
-            # print("cur_mock_names", cur_mock_names)
             for run_signal in signals:
                 if run_signal not in cur_mock_names:
-                    try: 
-                        if kclient.get_metadata([run_signal, ]) is not None:
+                    try:
+                        resolved = _resolve_databroker_path(kclient, run_signal)
+                        if resolved is not None:
                             hasNew = True
-                            print(f">>> Append new mock signal {run_signal}")
+                            if resolved == run_signal:
+                                print("[SYNCER] appendMockSignal: registered new signal " +
+                                      str(run_signal), flush=True)
+                            else:
+                                print("[SYNCER] appendMockSignal: registered new signal " +
+                                      str(run_signal) + " via alias " + str(resolved), flush=True)
                             cur_mock_names.append(run_signal)
                             cur_mocks.append({
                                 "signal":  run_signal,
                                 "value": "0"
                             })
+                        else:
+                            print("[SYNCER] appendMockSignal: no databroker path for " +
+                                  str(run_signal) + " (tried aliases)", flush=True)
                     except Exception as e:
-                        print(e,flush=True)
+                        print("[SYNCER] appendMockSignal: resolve failed for " +
+                              str(run_signal) + ": " + str(e), flush=True)
+                else:
+                    # Signal is already in signals.json (from a prior run).
+                    # path_alias_map is in-memory only, so warm it up now
+                    # otherwise ticker_fast will hit the un-aliased path.
+                    if run_signal not in path_alias_map:
+                        try:
+                            resolved = _resolve_databroker_path(kclient, run_signal)
+                            if resolved is None:
+                                print("[SYNCER] appendMockSignal: already tracked " +
+                                      str(run_signal) + " but no databroker path found", flush=True)
+                            elif resolved != run_signal:
+                                print("[SYNCER] appendMockSignal: already tracked " +
+                                      str(run_signal) + " -> alias " + str(resolved), flush=True)
+                            else:
+                                print("[SYNCER] appendMockSignal: already tracked " +
+                                      str(run_signal), flush=True)
+                        except Exception as e:
+                            print("[SYNCER] appendMockSignal: alias warmup failed for " +
+                                  str(run_signal) + ": " + str(e), flush=True)
+                    else:
+                        print("[SYNCER] appendMockSignal: already tracked " + str(run_signal), flush=True)
                     
             if hasNew:
                 f.seek(0)
@@ -680,20 +848,22 @@ def writeSignalsValue(input_str):
     with KClient(BORKER_IP, BROKER_PORT) as kclient:
         for path,value in signal_values.items():
             try:
-                meta_data = kclient.get_metadata([path], MetadataField.ENTRY_TYPE)
-                entry_type = meta_data[path].entry_type
+                db_path = _resolve_databroker_path(kclient, path) or path
+                if db_path != path:
+                    print("[SYNCER] writeSignalsValue: using alias " + str(path) +
+                          " -> " + str(db_path), flush=True)
+                meta_data = kclient.get_metadata([db_path], MetadataField.ENTRY_TYPE)
+                entry_type = meta_data[db_path].entry_type
                 if entry_type == EntryType.ACTUATOR:
                     try:
-                        target_value = {path: Datapoint(value)}
+                        target_value = {db_path: Datapoint(value)}
                         kclient.set_target_values(target_value)
-                        # print(target_value,flush=True)
                     except Exception as e:
                         print("Error occured when writing target values: " + str(e),flush=True)
                 elif entry_type == EntryType.SENSOR:
                     try:
-                        current_value = {path: Datapoint(value)}
+                        current_value = {db_path: Datapoint(value)}
                         kclient.set_current_values(current_value)
-                        # print(current_value, flush=True)
                     except Exception as e:
                         print("Error occured when writing current values: " + str(e), flush=True)
                 else:
@@ -712,6 +882,7 @@ async def start_socketio(SERVER):
         - Report API value back to client
 '''
 async def ticker_fast():
+    log_counter = 0
     while True:
         await asyncio.sleep(0.3)
         # count number of child in lsOfApiSubscriber
@@ -719,23 +890,68 @@ async def ticker_fast():
         if len(lsOfApiSubscriber) <= 0:
             continue
         if not client.connected:
-            await client.connect()
-            print("Kuksa connected", client.connected)
+            try:
+                await client.connect()
+                print("[SYNCER] ticker_fast: Kuksa connected=" + str(client.connected), flush=True)
+            except Exception as e:
+                print("[SYNCER] ticker_fast: Kuksa connect failed: " + str(e), flush=True)
             continue
 
         try:
+            log_counter += 1
+            # Log a heartbeat roughly every ~3s (0.3s * 10)
+            do_log = (log_counter % 10 == 0)
             for client_id in lsOfApiSubscriber:
                 apis = lsOfApiSubscriber[client_id]["apis"]
                 if len(apis) > 0:
-                    # print(f"read apis {apis}")
-                    # start_time = time.time()
-                    current_values_dict = {}
+                    # Map dashboard-facing api -> databroker path (may be identical).
+                    # We keep the reverse mapping to relabel the response.
+                    db_to_dash = {}
                     for api in apis:
+                        mapped = path_alias_map.get(api, api)
+                        # A cached None means "nothing works" - skip so we
+                        # don't spam the databroker with 404s.
+                        if mapped is None:
+                            continue
+                        db_to_dash[mapped] = api
+                    current_values_dict = {}
+                    for db_path, api in db_to_dash.items():
                         try:
-                            current_values = await client.get_current_values([api])
-                            current_values_dict.update(current_values)
+                            current_values = await client.get_current_values([db_path])
+                            # Relabel keys back to what the dashboard subscribed to.
+                            for k, v in current_values.items():
+                                current_values_dict[db_to_dash.get(k, k)] = v
                         except Exception as e:
-                            # print("get_current_values Error: ", str(e))
+                            # 404 = path not in databroker. Kick off an async
+                            # alias resolution once so future reads use the
+                            # correct path (or skip via negative cache).
+                            err_text = str(e)
+                            is_not_found = "not_found" in err_text or "404" in err_text
+                            if is_not_found and api not in path_alias_map and \
+                                    api not in _alias_resolution_in_flight:
+                                _alias_resolution_in_flight.add(api)
+                                loop = asyncio.get_running_loop()
+
+                                def _done(fut, _api=api):
+                                    _alias_resolution_in_flight.discard(_api)
+                                    try:
+                                        resolved = fut.result()
+                                    except Exception:
+                                        resolved = None
+                                    if resolved is None:
+                                        print("[SYNCER] ticker_fast: alias resolver gave up on " +
+                                              str(_api) + " (negative-cached)", flush=True)
+                                    elif resolved != _api:
+                                        print("[SYNCER] ticker_fast: alias resolved " +
+                                              str(_api) + " -> " + str(resolved), flush=True)
+
+                                fut = loop.run_in_executor(None, _resolve_alias_blocking, api)
+                                fut.add_done_callback(_done)
+                            if do_log:
+                                print("[SYNCER] ticker_fast: get_current_values failed for " +
+                                      str(api) +
+                                      (" (db=" + str(db_path) + ")" if db_path != api else "") +
+                                      ": " + err_text, flush=True)
                             pass
                     result = {}
                     for api in current_values_dict:
@@ -750,8 +966,24 @@ async def ticker_fast():
                                 result[api] = value
                         else:
                             result[api] = None
-                    # elapsed_time = time.time() - start_time
-                    # print(f"Execution time of one subscriber read: {elapsed_time:.6f} seconds")
+                    if do_log:
+                        none_count = sum(1 for v in result.values() if v is None)
+                        print("[SYNCER] ticker_fast: subscriber=" + str(client_id) +
+                              " apis=" + str(len(apis)) +
+                              " values_returned=" + str(len(result)) +
+                              " none_values=" + str(none_count) +
+                              " sample=" + str({k: result[k] for k in list(result)[:3]}), flush=True)
+                    # Always log the first emit for a brand-new subscriber so
+                    # we can confirm end-to-end delivery without waiting for
+                    # the periodic heartbeat.
+                    sub = lsOfApiSubscriber.get(client_id)
+                    if sub is not None and not sub.get("first_emit_logged", False):
+                        sub["first_emit_logged"] = True
+                        none_count = sum(1 for v in result.values() if v is None)
+                        print("[SYNCER] ticker_fast: FIRST emit to subscriber=" + str(client_id) +
+                              " values_returned=" + str(len(result)) +
+                              " none_values=" + str(none_count) +
+                              " payload=" + str(result), flush=True)
                     await sio.emit("messageToKit-kitReply", {
                         "kit_id": CLIENT_ID,
                         "request_from": client_id,
@@ -759,10 +991,9 @@ async def ticker_fast():
                         "result": result
                     })
         except VSSClientError as vssErr:
-            print("Error Code:" , str(vssErr),flush=True)
+            print("[SYNCER] ticker_fast: VSSClientError: " + str(vssErr), flush=True)
         except Exception as e:
-            # pass
-            print("Error:" , str(e),flush=True)
+            print("[SYNCER] ticker_fast: unexpected error: " + str(e), flush=True)
 
 '''
     One second ticker
@@ -770,7 +1001,7 @@ async def ticker_fast():
         - Stop long runner
 '''
 async def ticker():
-    print("Kuksa connected", client.connected)
+    print("[SYNCER] ticker started. Kuksa connected=" + str(client.connected), flush=True)
     while True:
         await asyncio.sleep(1)
 
@@ -856,7 +1087,12 @@ async def main():
     CLIENT_ID = runtime_prefix + runtime_name
     print('RunTime display name: ' + CLIENT_ID, flush=True)
 
-    await client.connect()
+    try:
+        await client.connect()
+        print("[SYNCER] Initial Kuksa databroker connect: connected=" +
+              str(client.connected) + " (" + str(BORKER_IP) + ":" + str(BROKER_PORT) + ")", flush=True)
+    except Exception as e:
+        print("[SYNCER] Initial Kuksa databroker connect FAILED: " + str(e), flush=True)
     await asyncio.gather(start_socketio(SERVER), ticker(), ticker_fast(), ticker_5s())
 
 if __name__ == "__main__":
