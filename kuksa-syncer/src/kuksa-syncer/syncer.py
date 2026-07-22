@@ -30,11 +30,13 @@ apply_global_patch()
 # from vehicle_model_manager import generate_vehicle_model, revert_vehicle_model
 import pkg_manager
 
-BORKER_IP = 'kuksa'  # Aos Unit (model Bosch) has a Kuksa databroker at this address
-BROKER_PORT = 55555
+# Infra endpoints are env-overridable so the same image can run on the AosUnit
+# (defaults) or on Azure Container Apps (env vars set by the deployment).
+BORKER_IP = os.getenv('KUKSA_BROKER_HOST', 'kuksa')
+BROKER_PORT = int(os.getenv('KUKSA_BROKER_PORT', '55555'))
 
 DEFAULT_KIT_SERVER = 'https://kit.digitalauto.tech'
-DEFAULT_RUNTIME_NAME = 'MyRuntime'
+DEFAULT_RUNTIME_NAME = 'AOS-Bosch'
 DEFAULT_RUNTIME_PREFIX = 'Runtime-'
 
 TIME_TO_KEEP_SUBSCRIBER_ALIVE = 60
@@ -49,8 +51,11 @@ sio = socketio.AsyncClient()
 
 client = VSSClient(BORKER_IP, BROKER_PORT)
 
-mock_signal_read_ony_filename = "signals.json"   # Writable volume is /storage
-mock_signal_path = "/storage/signals.json"   # Writable volume is /storage
+# Storage location for the mock-signals file. On AosUnit this is a mounted
+# writable volume at /storage; on Azure Container Apps we mount an Azure Files
+# share to the same path (or override via env).
+mock_signal_read_ony_filename = "signals.json"
+mock_signal_path = os.getenv('SIGNALS_STORE_PATH', '/storage/signals.json')
 
 # ---------------------------------------------------------------------------
 # VSS path alias layer
