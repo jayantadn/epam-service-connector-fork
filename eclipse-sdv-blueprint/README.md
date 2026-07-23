@@ -140,6 +140,8 @@ sudo ./aos_vm.sh run -f .
 ip neigh
 ```
 
+- Use `Password1` as the password when prompted to log in to the VMs.
+
 - Monitor the boot and service logs with:
 
 ```bash
@@ -361,16 +363,27 @@ Use the actual interface name on your machine, for example `eth0`, `ens33`, `enp
 
 ### Debug Steps for Application Deployment
 
-1. SSH into the VM where the application is running. For example:
+1. SSH into the Secondary-VM :
 
 ```bash
-ssh ubuntu@10.0.0.100
+ssh ubuntu@10.0.0.X 
+```
+
+- If the filesystem is mounted read-only, remount it as writable:
+
+```bash
+mount -o rw,remount /
+```
+
+- note:To get to know Secondary-VM ip 
+```bash
+ip neigh
 ```
 
 2. Open `/etc/hosts` for editing with `vi`:
 
 ```bash
-sudo vi /etc/hosts
+vi /etc/hosts
 ```
 
 3. Add the following entry to the file:
