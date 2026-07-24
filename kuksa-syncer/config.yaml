@@ -15,6 +15,7 @@ items:
     title: Kuksa Syncer
 
   sourceFolder: src/kuksa-syncer
+  #try changing the version to if deployement fails
   version: 1.0.4
 
   images:
@@ -41,11 +42,11 @@ items:
   - identity:
       type: layer
       codename: kuksa-client
-    versions: ">=6.1.0-bosch.2"
+    versions: ">=6.1.1-bosch.1"
   - identity:
       type: layer
       codename: pylibs
-    versions: "6.1.0-bosch.2"
+    versions: "6.1.1-bosch.1"
 #  - identity:
 #      type: layer
 #      codename: zenoh-python
