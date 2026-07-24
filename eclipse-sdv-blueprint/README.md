@@ -181,12 +181,22 @@ cd /path/to/demo-services/ev-range-extender
 aos-signer go
 ```
 - Confirm that these application are then downloaded by the target VM after the cloud-side deployment is configured.
-- Check application deployment on both VMs using
+
+- If it return nothing on both VMs follow [Debug Steps for Application Deployment](#debug-steps-for-application-deployment)
+
+
+**Playground Dashboard Connectivity**
+
+The `kuksa-syncer` service is now part of this repository. Use the local service directory from this workspace and package it for Aos deployment from there.
 
 ```bash
-crun --root=/run/crun list
+cd /path/to/epam-service-connector-fork/kuksa-syncer
+aos-signer go
 ```
-- If it return nothing on both VMs follow [Debug Steps for Application Deployment](#debug-steps-for-application-deployment)
+
+- Add the generated `kuksa-syncer` service to the created subject (`aos-bosch`) in the AOS dashboard.
+- Verify the deployment result in Aos Dashboard → SOTA/FOTA → Deployment Bundles.
+- If the deployment does not appear or is rejected, update the service version in `kuksa-syncer/config.yaml` and re-run `aos-signer go`.
 
 ##### Section 2 — AOSEdge setup
 
@@ -209,19 +219,6 @@ crun --root=/run/crun list
 - In AosEdge Dashboard → SOTA/FOTA → Verification Batches, open the package and approve it for deployment.
 - In AosEdge Dashboard → SOTA/FOTA → Deployment Bundles, confirm that the package is validated and available.
 - Observe the deployment process with `journalctl -f` on the VM and confirm that the service starts successfully.
-
-**Playground Dashboard Connectivity**
-
-Clone this repo [Kuksa-syncer](https://github.com/oleh-mykytiuk/epam-service-connector-fork.git) 
-
-```bash
-git checkout kuksa-syncer-aos
-cd kuksa-syncer
-aos-signer go
-```
-- add the service to created Subject(aos-bosch).
-- please check for deployment successed on Aos-Dashboard on SOTA/FOTA -> Deployment bundles if fails try changing version the config.yaml of kuksa-syncer
-- Add the create kuksa-syncer service to subject(aos-bosch).
 
 ##### Section 3 — Build and deploy the SDV application
 
