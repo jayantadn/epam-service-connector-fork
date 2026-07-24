@@ -162,6 +162,7 @@ This step installs the core components e.g. `kuksa-client`, `zenoh`, and `pylibs
 
 ```bash
 tar -xvf aos-vm-layers-genericx86-64-6.1.1-bosch.1.tar.gz
+cd layers
 aos-signer go
 ```
 
@@ -213,6 +214,12 @@ aos-signer go
   - On service add the services that are deployed `Range-Ai`,`Seat ECU`,`HVAC ECU`and `BMS`.
 
   - After creating the required unit_set and subject in the AOS dashboard, deployment can be bound to the target VM and services will be deployed on respective VM's.
+
+  - Check application deployment on both VMs using
+
+```bash
+crun --root=/run/crun list
+```
 
 **Approve and bind the service**
 
