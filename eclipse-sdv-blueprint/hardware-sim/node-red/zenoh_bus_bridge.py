@@ -51,20 +51,20 @@ def on_status(sample: zenoh.Sample) -> None:
 
 
 def publish(key: str, value: Any) -> dict[str, Any]:
-    if session is None:
-        raise RuntimeError(f"Zenoh router unavailable at {ZENOH_ROUTER}")
-    publisher = publishers.get(key)
-    if publisher is None:
-        publisher = session.declare_publisher(key)
-        publishers[key] = publisher
-    payload = {
-        "key": key,
-        "value": value,
-        "source": SOURCE,
-        "ts": timestamp(),
-    }
-    publisher.put(json.dumps(payload).encode("utf-8"))
     with state_lock:
+        if session is None:
+            raise RuntimeError(f"Zenoh router unavailable at {ZENOH_ROUTER}")
+        publisher = publishers.get(key)
+        if publisher is None:
+            publisher = session.declare_publisher(key)
+            publishers[key] = publisher
+        payload = {
+            "key": key,
+            "value": value,
+            "source": SOURCE,
+            "ts": timestamp(),
+        }
+        publisher.put(json.dumps(payload).encode("utf-8"))
         state["signals"][key] = value
     return payload
 
@@ -86,7 +86,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.reply(404, {"ok": False, "error": "not found"})
             return
         with state_lock:
-            self.reply(200, json.loads(json.dumps(state)))
+            snapshot = json.loads(json.dumps(state))
+        self.reply(200, snapshot)
 
     def do_POST(self) -> None:
         if self.path != "/publish":
@@ -132,9 +133,9 @@ def connect_zenoh() -> None:
         except Exception as exc:
             print(f"[zenoh-bridge] waiting for {ZENOH_ROUTER}: {exc}", flush=True)
         finally:
-            session = None
-            publishers.clear()
             with state_lock:
+                session = None
+                publishers.clear()
                 state["connected"]["zenoh"] = False
         if not stop_event.is_set():
             stop_event.wait(2)

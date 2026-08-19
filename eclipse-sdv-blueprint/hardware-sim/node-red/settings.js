@@ -7,18 +7,22 @@
 // SPDX-License-Identifier: MIT
 
 module.exports = {
+  uiHost: process.env.NODE_RED_HOST || "127.0.0.1",
   uiPort: process.env.PORT || 1880,
   flowFile: process.env.FLOW_FILE || "flows/ev-range-dashboard.json",
   userDir: __dirname,
 
   flowFilePretty: true,
-  disableEditor: false,
+  // Editor and Function-node external modules are opt-in: the editor has
+  // no adminAuth configured, so leaving them on by default would let
+  // anyone reaching this port edit flows and run arbitrary code.
+  disableEditor: process.env.NODE_RED_ENABLE_EDITOR !== "true",
   editorTheme: {
     projects: {
       enabled: false
     }
   },
-  functionExternalModules: true,
+  functionExternalModules: process.env.NODE_RED_FUNCTION_EXTERNAL_MODULES === "true",
 
   logging: {
     console: {

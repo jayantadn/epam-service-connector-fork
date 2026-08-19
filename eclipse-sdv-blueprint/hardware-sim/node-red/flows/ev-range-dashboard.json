@@ -222,8 +222,8 @@
     "type": "function",
     "z": "ev-range-tab",
     "name": "Publish startup defaults",
-    "func": "// Mirror pytk_dashboard.py _publish_startup_defaults (T+4s).\n// Give the TCP bridge time to connect to all VM ECUs first.\nflow.set('soc', 80);\nflow.set('voltage', 380);\nflow.set('current', 30);\nflow.set('hvacValue', 0);\nflow.set('heatOn', false);\nflow.set('coolOn', false);\nflow.set('driveOn', false);\nflow.set('autoActionDone', false);\n\nconst defaults = [\n  { key: 'sim/battery/voltage', value: 380 },\n  { key: 'sim/battery/current', value: 30 },\n  { key: 'sim/battery/soc', value: 80 },\n  { key: 'sim/cabin/temp', value: 0 },\n  { key: 'sim/cabin/seat/heating', value: 0 },\n  { key: 'sim/cabin/seat/hc', value: 0 }\n];\n\n// Space publishes ~60ms apart so http-request node processes each cleanly.\ndefaults.forEach((d, i) => {\n  setTimeout(() => {\n    node.send([{ payload: d }, null]);\n  }, i * 60);\n});\n\n// After all defaults sent, kick the auto-action via output 2.\nsetTimeout(() => {\n  node.send([null, { payload: 'go' }]);\n}, defaults.length * 60 + 400);\n\nreturn null;",
-    "outputs": 2,
+    "func": "// Mirror pytk_dashboard.py _publish_startup_defaults (T+4s / per-refresh).\nflow.set('soc', 80);\nflow.set('voltage', 380);\nflow.set('current', 30);\nflow.set('hvacValue', 0);\nflow.set('heatOn', false);\nflow.set('coolOn', false);\nflow.set('driveOn', false);\nflow.set('engineStarted', false);\nflow.set('autoActionDone', false);\n\nconst defaults = [\n  { key: 'sim/battery/voltage', value: 380 },\n  { key: 'sim/battery/current', value: 30 },\n  { key: 'sim/battery/soc', value: 80 },\n  { key: 'sim/cabin/temp', value: 0 },\n  { key: 'sim/cabin/seat/heating', value: 0 },\n  { key: 'sim/cabin/seat/hc', value: 0 }\n];\n\n// Sync the widgets immediately, including turning the Drive engine off.\nnode.send([\n  null, null,\n  { payload: 380 }, { payload: 30 }, { payload: 80 },\n  { payload: 0 }, { payload: false }, { payload: false },\n  { payload: false }\n]);\n\n// Space publishes ~60ms apart so http-request node processes each cleanly.\ndefaults.forEach((d, i) => {\n  setTimeout(() => {\n    node.send([{ payload: d }, null, null, null, null, null, null, null, null]);\n  }, i * 60);\n});\n\n// After all defaults sent, kick the auto-action via output 2.\nsetTimeout(() => {\n  node.send([null, { payload: 'go' }, null, null, null, null, null, null, null]);\n}, defaults.length * 60 + 400);\n\nreturn null;",
+    "outputs": 9,
     "timeout": 0,
     "noerr": 0,
     "initialize": "",
@@ -237,6 +237,29 @@
       ],
       [
         "ev-range-init-auto-action"
+      ],
+      [
+        "ev-range-slider-voltage"
+      ],
+      [
+        "ev-range-slider-current"
+      ],
+      [
+        "ev-range-slider-soc",
+        "ev-range-battery-meter"
+      ],
+      [
+        "ev-range-slider-hvac",
+        "ev-range-fan-anim"
+      ],
+      [
+        "ev-range-switch-heat"
+      ],
+      [
+        "ev-range-switch-cool"
+      ],
+      [
+        "ev-range-drive-button"
       ]
     ]
   },
@@ -259,10 +282,37 @@
         "ev-range-http-publish"
       ],
       [
-        "ev-range-slider-hvac"
+        "ev-range-slider-hvac",
+        "ev-range-fan-anim"
       ],
       [
         "ev-range-switch-cool"
+      ]
+    ]
+  },
+  {
+    "id": "ev-range-page-init",
+    "type": "ui-template",
+    "z": "ev-range-tab",
+    "group": "ev-range-group-notify",
+    "page": "",
+    "ui": "",
+    "name": "Page load trigger",
+    "order": 99,
+    "width": "1",
+    "height": "1",
+    "head": "",
+    "format": "<template>\n  <div style=\"display:none\"></div>\n</template>\n<script>\nexport default {\n  mounted(){ this.send({ payload: 'refresh' }); }\n}\n</script>",
+    "storeOutMessages": false,
+    "passthru": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "className": "",
+    "x": 160,
+    "y": 40,
+    "wires": [
+      [
+        "ev-range-init-func"
       ]
     ]
   },
@@ -297,7 +347,7 @@
     "type": "function",
     "z": "ev-range-tab",
     "name": "Toggle drive",
-    "func": "const on = !!msg.payload;\nconst prev = !!flow.get('driveOn');\nflow.set('driveOn', on);\nconst fanMsg = { payload: on, topic: 'drive' };\nconst started = flow.get('engineStarted');\nif (!prev && on) {\n  flow.set('engineStarted', true);\n  return [fanMsg, { payload: { text: 'Engine turned ON', kind: 'on' } }];\n}\nif (prev && !on && started) {\n  return [fanMsg, { payload: { text: 'Engine turned OFF', kind: 'off' } }];\n}\nreturn [fanMsg, null];",
+    "func": "const on = !!msg.payload;\nconst prev = !!flow.get('driveOn');\nflow.set('driveOn', on);\n// Single combined message so the fan animation always has both the engine\n// state and the current speed together, even if only this message survives\n// a page refresh.\nconst fanMsg = { payload: { on, speed: Number(flow.get('hvacValue')) || 0 } };\nconst started = flow.get('engineStarted');\nif (!prev && on) {\n  flow.set('engineStarted', true);\n  return [fanMsg, { payload: { text: 'Engine turned ON', kind: 'on' } }];\n}\nif (prev && !on && started) {\n  return [fanMsg, { payload: { text: 'Engine turned OFF', kind: 'off' } }];\n}\nreturn [fanMsg, null];",
     "outputs": 2,
     "timeout": 0,
     "noerr": 0,
@@ -796,8 +846,8 @@
     "type": "function",
     "z": "ev-range-tab",
     "name": "Build status text",
-    "func": "const payload = msg.payload || {};\nconst statuses = payload.statuses || {};\n\n// ----- HVAC -----\nconst hvacStatus = statuses['dash/status/hvac'];\nlet hvacOn = false;\nlet hvacVal = 0;\nlet hvacText = 'awaiting ECU...';\nlet hvacSrc = '?';\nif (hvacStatus) {\n  if (hvacStatus.value !== undefined && hvacStatus.value !== null) {\n    hvacVal = Number(hvacStatus.value) || 0;\n    hvacOn = hvacVal > 0;\n  } else if (hvacStatus.status) {\n    hvacOn = String(hvacStatus.status).toLowerCase() === 'on';\n  }\n  hvacSrc = hvacStatus.source || hvacStatus._endpoint || '?';\n  hvacText = `Fan ${hvacOn ? 'ON' : 'OFF'} (${hvacVal}%)  src=${hvacSrc}`;\n}\nconst hvacDot = hvacOn ? '🟢' : '🔴';\n\n// ----- Seat -----\nconst heatStatus = statuses['dash/status/seat#seat.heating'];\nconst coolStatus = statuses['dash/status/seat#seat.heating_cooling'];\nconst heatingVal = heatStatus ? Number(heatStatus.value ?? 0) : 0;\nconst hcVal = coolStatus ? Number(coolStatus.value ?? 0) : 0;\nconst heatOn = (heatingVal !== 0) || (hcVal > 0);\nconst coolOn = (hcVal < 0);\nconst heatDot = heatOn ? '🔴' : '⚪';\nconst coolDot = coolOn ? '🔵' : '⚪';\nconst heatSrc = heatStatus ? (heatStatus.source || heatStatus._endpoint || '?') : '-';\nconst coolSrc = coolStatus ? (coolStatus.source || coolStatus._endpoint || '?') : '-';\nconst heatText = heatStatus ? `heating=${heatingVal} hc=${hcVal}  src=${heatSrc}` : 'awaiting ECU...';\nconst coolText = coolStatus ? `hc=${hcVal}  src=${coolSrc}` : 'awaiting ECU...';\n\n// ----- Change detection -----\nconst prev = flow.get('lastStatusSnap') || {};\nconst snap = { hvacVal, heatingVal, hcVal, hvacOn, heatOn, coolOn };\nflow.set('lastStatusSnap', snap);\n\n// ----- Off notifications (only when prev was explicitly true) -----\nlet notif = null;\nif (flow.get('engineStarted')) {\n  if (prev.hvacOn === false && hvacOn) notif = { payload: { text: 'Fan turned ON', kind: 'on' } };\n  else if (prev.hvacOn === true && !hvacOn) notif = { payload: { text: 'Fan turned OFF', kind: 'off' } };\n  else if (prev.heatOn === false && heatOn) notif = { payload: { text: 'Seat heating turned ON', kind: 'on' } };\n  else if (prev.heatOn === true && !heatOn) notif = { payload: { text: 'Seat heating turned OFF', kind: 'off' } };\n  else if (prev.coolOn === false && coolOn) notif = { payload: { text: 'Seat cooling turned ON', kind: 'on' } };\n  else if (prev.coolOn === true && !coolOn) notif = { payload: { text: 'Seat cooling turned OFF', kind: 'off' } };\n}\n\nreturn [\n  { payload: `${hvacDot}  ${hvacText}` },\n  { payload: `${heatDot}  ${heatText}` },\n  { payload: `${coolDot}  ${coolText}` },\n  notif\n];",
-    "outputs": 4,
+    "func": "const payload = msg.payload || {};\nconst statuses = payload.statuses || {};\nconst signals = payload.signals || {};\n\n// ----- HVAC -----\nconst hvacStatus = statuses['dash/status/hvac'];\nlet hvacOn = false;\nlet hvacVal = 0;\nlet hvacText = 'awaiting ECU...';\nlet hvacSrc = '?';\nif (hvacStatus) {\n  if (hvacStatus.value !== undefined && hvacStatus.value !== null) {\n    hvacVal = Number(hvacStatus.value) || 0;\n    hvacOn = hvacVal > 0;\n  } else if (hvacStatus.status) {\n    hvacOn = String(hvacStatus.status).toLowerCase() === 'on';\n  }\n  hvacSrc = hvacStatus.source || hvacStatus._endpoint || '?';\n  hvacText = `Fan ${hvacOn ? 'ON' : 'OFF'} (${hvacVal}%)  src=${hvacSrc}`;\n}\nconst hvacDot = hvacOn ? '🟢' : '🔴';\nif (hvacStatus) {\n  flow.set('hvacValue', hvacVal);\n}\n\n// ----- Seat -----\nconst heatStatus = statuses['dash/status/seat#seat.heating'];\nconst coolStatus = statuses['dash/status/seat#seat.heating_cooling'];\nconst heatingVal = heatStatus ? Number(heatStatus.value ?? 0) : 0;\nconst hcVal = coolStatus ? Number(coolStatus.value ?? 0) : 0;\nconst heatOn = (heatingVal !== 0) || (hcVal > 0);\nconst coolOn = (hcVal < 0);\nconst heatDot = heatOn ? '🔴' : '⚪';\nconst coolDot = coolOn ? '🔵' : '⚪';\nconst heatSrc = heatStatus ? (heatStatus.source || heatStatus._endpoint || '?') : '-';\nconst coolSrc = coolStatus ? (coolStatus.source || coolStatus._endpoint || '?') : '-';\nconst heatText = heatStatus ? `heating=${heatingVal} hc=${hcVal}  src=${heatSrc}` : 'awaiting ECU...';\nconst coolText = coolStatus ? `hc=${hcVal}  src=${coolSrc}` : 'awaiting ECU...';\n\n// ----- Battery (self-echo of Node-RED's own last published values) -----\nconst voltage = signals['sim/battery/voltage'];\nconst current = signals['sim/battery/current'];\nconst soc = signals['sim/battery/soc'];\n\n// ----- Change detection -----\nconst prev = flow.get('lastStatusSnap') || {};\nconst snap = { hvacVal, heatingVal, hcVal, voltage, current, soc, hvacOn, heatOn, coolOn };\nflow.set('lastStatusSnap', snap);\n\n// ----- Off notifications (only when prev was explicitly true) -----\nlet notif = null;\nif (flow.get('engineStarted')) {\n  if (prev.hvacOn === false && hvacOn) notif = { payload: { text: 'Fan turned ON', kind: 'on' } };\n  else if (prev.hvacOn === true && !hvacOn) notif = { payload: { text: 'Fan turned OFF', kind: 'off' } };\n  else if (prev.heatOn === false && heatOn) notif = { payload: { text: 'Seat heating turned ON', kind: 'on' } };\n  else if (prev.heatOn === true && !heatOn) notif = { payload: { text: 'Seat heating turned OFF', kind: 'off' } };\n  else if (prev.coolOn === false && coolOn) notif = { payload: { text: 'Seat cooling turned ON', kind: 'on' } };\n  else if (prev.coolOn === true && !coolOn) notif = { payload: { text: 'Seat cooling turned OFF', kind: 'off' } };\n}\n\nreturn [\n  { payload: `${hvacDot}  ${hvacText}` },\n  { payload: `${heatDot}  ${heatText}` },\n  { payload: `${coolDot}  ${coolText}` },\n  (voltage !== undefined && prev.voltage !== voltage) ? { payload: voltage } : null,\n  (current !== undefined && prev.current !== current) ? { payload: current } : null,\n  (soc !== undefined && prev.soc !== soc) ? { payload: soc } : null,\n  (prev.hvacVal !== hvacVal) ? { payload: hvacVal } : null,\n  notif\n];",
+    "outputs": 8,
     "timeout": 0,
     "noerr": 0,
     "initialize": "",
@@ -816,6 +866,20 @@
         "ev-range-text-seat-cool-status"
       ],
       [
+        "ev-range-slider-voltage"
+      ],
+      [
+        "ev-range-slider-current"
+      ],
+      [
+        "ev-range-slider-soc",
+        "ev-range-battery-meter"
+      ],
+      [
+        "ev-range-slider-hvac",
+        "ev-range-fan-anim"
+      ],
+      [
         "ev-range-notify"
       ]
     ]
@@ -832,7 +896,7 @@
     "width": "3",
     "height": "6",
     "head": "",
-    "format": "<template>\n  <div class=\"fan-wrap\">\n    <svg :class=\"['fan-svg', { spinning: !off }]\" :style=\"svgStyle\" viewBox=\"0 0 120 120\">\n      <defs>\n        <radialGradient :id=\"'fan-housing-'+uid\" cx=\"50%\" cy=\"40%\" r=\"60%\">\n          <stop offset=\"0%\" stop-color=\"#3a3a3a\" />\n          <stop offset=\"100%\" stop-color=\"#0a0a0a\" />\n        </radialGradient>\n        <linearGradient :id=\"'fan-blade-'+uid\" x1=\"0%\" y1=\"0%\" x2=\"100%\" y2=\"100%\">\n          <stop offset=\"0%\" :stop-color=\"bladeHi\" />\n          <stop offset=\"100%\" :stop-color=\"bladeLo\" />\n        </linearGradient>\n        <radialGradient :id=\"'fan-hub-'+uid\" cx=\"50%\" cy=\"50%\" r=\"50%\">\n          <stop offset=\"0%\" stop-color=\"#bbb\" />\n          <stop offset=\"100%\" stop-color=\"#222\" />\n        </radialGradient>\n        <filter :id=\"'fan-glow-'+uid\" x=\"-50%\" y=\"-50%\" width=\"200%\" height=\"200%\">\n          <feGaussianBlur stdDeviation=\"3\" result=\"b\" />\n          <feMerge><feMergeNode in=\"b\"/><feMergeNode in=\"SourceGraphic\"/></feMerge>\n        </filter>\n      </defs>\n      <circle cx=\"60\" cy=\"60\" r=\"58\" :fill=\"'url(#fan-housing-'+uid+')'\" stroke=\"#555\" stroke-width=\"2\" />\n      <circle cx=\"60\" cy=\"60\" r=\"52\" fill=\"none\" stroke=\"#1a1a1a\" stroke-width=\"1\" />\n      <g :fill=\"'url(#fan-blade-'+uid+')'\" :filter=\"glowing?'url(#fan-glow-'+uid+')':''\" opacity=\"0.95\">\n        <path d=\"M60 60 C 70 30, 70 18, 60 8 C 50 18, 50 30, 60 60 Z\" />\n        <path d=\"M60 60 C 90 50, 102 50, 112 60 C 102 70, 90 70, 60 60 Z\" />\n        <path d=\"M60 60 C 50 90, 50 102, 60 112 C 70 102, 70 90, 60 60 Z\" />\n        <path d=\"M60 60 C 30 70, 18 70, 8 60 C 18 50, 30 50, 60 60 Z\" />\n      </g>\n      <circle cx=\"60\" cy=\"60\" r=\"10\" :fill=\"'url(#fan-hub-'+uid+')'\" stroke=\"#000\" stroke-width=\"1.5\" />\n      <circle cx=\"60\" cy=\"60\" r=\"3\" fill=\"#000\" />\n    </svg>\n    <div class=\"fan-meta\">\n      <div class=\"fan-value\" :style=\"{ color: bladeHi, textShadow: glowing ? `0 0 12px ${bladeHi}` : 'none' }\">{{ valueLabel }}</div>\n      <div class=\"fan-sublabel\">{{ rpmLabel }}</div>\n    </div>\n    <!-- hidden style injector: recolors fan slider when speed===0 -->\n    <component :is=\"'style'\">.fan-slider .v-slider-track__background, .fan-slider .v-slider-track__background--opacity { background: {{ trackColor }} !important; opacity: 1 !important; } .fan-slider .v-slider-track__fill { background: {{ fillColor }} !important; } .fan-slider .v-slider-thumb__surface { background: {{ fillColor }} !important; } .fan-slider .v-icon { color: {{ fillColor }} !important; }</component>\n  </div>\n</template>\n<style>\n.fan-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:4px 4px;width:100%;}\n.fan-svg{width:140px;height:140px;min-width:140px;min-height:140px;max-width:140px;max-height:140px;flex:0 0 140px;aspect-ratio:1/1;transform-origin:50% 50%;filter:drop-shadow(0 4px 10px rgba(0,0,0,0.6));}\n.fan-svg.spinning{animation:fan-spin var(--fan-dur,2s) linear infinite;}\n@keyframes fan-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}\n.fan-meta{display:flex;flex-direction:column;align-items:center;margin-top:4px;font-family:'Roboto Mono',monospace;}\n.fan-value{font-size:22px;font-weight:900;letter-spacing:2px;transition:all 0.3s;}\n.fan-sublabel{font-size:13px;letter-spacing:4px;color:#999;margin-top:2px;}\n</style>\n<script>\nexport default {\n  data(){return {engineOn:false,speed:0,uid:Math.random().toString(36).slice(2,8)}},\n  computed:{\n    svgStyle(){const s=Math.max(1,this.speed);const dur=Math.max(0.18,2.6-(s/100)*2.42);return {'--fan-dur':dur+'s'}},\n    glowing(){return this.speed>0},\n    bladeHi(){if(this.speed===0)return '#666';if(this.speed<33)return '#3498db';if(this.speed<66)return '#ff6b35';return '#e74c3c'},\n    bladeLo(){if(this.speed===0)return '#333';if(this.speed<33)return '#1a4a6b';if(this.speed<66)return '#7a3215';return '#7a1d12'},\n    rpmLabel(){if(!this.engineOn||this.speed===0)return 'IDLE';if(this.speed<33)return 'LOW';if(this.speed<66)return 'MEDIUM';return 'HIGH'},\n    trackColor(){return this.speed===0?'rgba(231,76,60,0.35)':'rgba(255,107,53,0.30)'},\n    fillColor(){return this.speed===0?'#e74c3c':'#ff6b35'},\n    off(){return !this.engineOn||this.speed===0},\n    valueLabel(){return this.off?'OFF':this.speed+'%'}\n  },\n  watch:{msg:{handler(m){if(!m||m.payload==null)return;if(m.topic==='drive'){this.engineOn=!!m.payload;return;}const n=Number(m.payload);if(!isNaN(n))this.speed=Math.max(0,Math.min(100,Math.round(n)));},deep:true,immediate:true}}\n}\n</script>",
+    "format": "<template>\n  <div class=\"fan-wrap\">\n    <svg :class=\"['fan-svg', { spinning: !off }]\" :style=\"svgStyle\" viewBox=\"0 0 120 120\">\n      <defs>\n        <radialGradient :id=\"'fan-housing-'+uid\" cx=\"50%\" cy=\"40%\" r=\"60%\">\n          <stop offset=\"0%\" stop-color=\"#3a3a3a\" />\n          <stop offset=\"100%\" stop-color=\"#0a0a0a\" />\n        </radialGradient>\n        <linearGradient :id=\"'fan-blade-'+uid\" x1=\"0%\" y1=\"0%\" x2=\"100%\" y2=\"100%\">\n          <stop offset=\"0%\" :stop-color=\"bladeHi\" />\n          <stop offset=\"100%\" :stop-color=\"bladeLo\" />\n        </linearGradient>\n        <radialGradient :id=\"'fan-hub-'+uid\" cx=\"50%\" cy=\"50%\" r=\"50%\">\n          <stop offset=\"0%\" stop-color=\"#bbb\" />\n          <stop offset=\"100%\" stop-color=\"#222\" />\n        </radialGradient>\n        <filter :id=\"'fan-glow-'+uid\" x=\"-50%\" y=\"-50%\" width=\"200%\" height=\"200%\">\n          <feGaussianBlur stdDeviation=\"3\" result=\"b\" />\n          <feMerge><feMergeNode in=\"b\"/><feMergeNode in=\"SourceGraphic\"/></feMerge>\n        </filter>\n      </defs>\n      <circle cx=\"60\" cy=\"60\" r=\"58\" :fill=\"'url(#fan-housing-'+uid+')'\" stroke=\"#555\" stroke-width=\"2\" />\n      <circle cx=\"60\" cy=\"60\" r=\"52\" fill=\"none\" stroke=\"#1a1a1a\" stroke-width=\"1\" />\n      <g :fill=\"'url(#fan-blade-'+uid+')'\" :filter=\"glowing?'url(#fan-glow-'+uid+')':''\" opacity=\"0.95\">\n        <path d=\"M60 60 C 70 30, 70 18, 60 8 C 50 18, 50 30, 60 60 Z\" />\n        <path d=\"M60 60 C 90 50, 102 50, 112 60 C 102 70, 90 70, 60 60 Z\" />\n        <path d=\"M60 60 C 50 90, 50 102, 60 112 C 70 102, 70 90, 60 60 Z\" />\n        <path d=\"M60 60 C 30 70, 18 70, 8 60 C 18 50, 30 50, 60 60 Z\" />\n      </g>\n      <circle cx=\"60\" cy=\"60\" r=\"10\" :fill=\"'url(#fan-hub-'+uid+')'\" stroke=\"#000\" stroke-width=\"1.5\" />\n      <circle cx=\"60\" cy=\"60\" r=\"3\" fill=\"#000\" />\n    </svg>\n    <div class=\"fan-meta\">\n      <div class=\"fan-value\" :style=\"{ color: bladeHi, textShadow: glowing ? `0 0 12px ${bladeHi}` : 'none' }\">{{ valueLabel }}</div>\n      <div class=\"fan-sublabel\">{{ rpmLabel }}</div>\n    </div>\n    <!-- hidden style injector: recolors fan slider when speed===0 -->\n    <component :is=\"'style'\">.fan-slider .v-slider-track__background, .fan-slider .v-slider-track__background--opacity { background: {{ trackColor }} !important; opacity: 1 !important; } .fan-slider .v-slider-track__fill { background: {{ fillColor }} !important; } .fan-slider .v-slider-thumb__surface { background: {{ fillColor }} !important; } .fan-slider .v-icon { color: {{ fillColor }} !important; }</component>\n  </div>\n</template>\n<style>\n.fan-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:4px 4px;width:100%;}\n.fan-svg{width:140px;height:140px;min-width:140px;min-height:140px;max-width:140px;max-height:140px;flex:0 0 140px;aspect-ratio:1/1;transform-origin:50% 50%;filter:drop-shadow(0 4px 10px rgba(0,0,0,0.6));}\n.fan-svg.spinning{animation:fan-spin var(--fan-dur,2s) linear infinite;}\n@keyframes fan-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}\n.fan-meta{display:flex;flex-direction:column;align-items:center;margin-top:4px;font-family:'Roboto Mono',monospace;}\n.fan-value{font-size:22px;font-weight:900;letter-spacing:2px;transition:all 0.3s;}\n.fan-sublabel{font-size:13px;letter-spacing:4px;color:#999;margin-top:2px;}\n</style>\n<script>\nexport default {\n  data(){return {engineOn:false,speed:0,uid:Math.random().toString(36).slice(2,8)}},\n  computed:{\n    svgStyle(){const s=Math.max(1,this.speed);const dur=Math.max(0.18,2.6-(s/100)*2.42);return {'--fan-dur':dur+'s'}},\n    glowing(){return this.speed>0},\n    bladeHi(){if(this.speed===0)return '#666';if(this.speed<33)return '#3498db';if(this.speed<66)return '#ff6b35';return '#e74c3c'},\n    bladeLo(){if(this.speed===0)return '#333';if(this.speed<33)return '#1a4a6b';if(this.speed<66)return '#7a3215';return '#7a1d12'},\n    rpmLabel(){if(!this.engineOn||this.speed===0)return 'IDLE';if(this.speed<33)return 'LOW';if(this.speed<66)return 'MEDIUM';return 'HIGH'},\n    trackColor(){return this.speed===0?'rgba(231,76,60,0.35)':'rgba(255,107,53,0.30)'},\n    fillColor(){return this.speed===0?'#e74c3c':'#ff6b35'},\n    off(){return !this.engineOn||this.speed===0},\n    valueLabel(){return this.off?'OFF':this.speed+'%'}\n  },\n  watch:{\n    msg:{\n      handler(m){\n        if(!m||m.payload==null)return;\n        const p=m.payload;\n        if(p!==null&&typeof p==='object'&&!Array.isArray(p)){\n          if('on' in p)this.engineOn=!!p.on;\n          if('speed' in p){const n=Number(p.speed);if(!isNaN(n))this.speed=Math.max(0,Math.min(100,Math.round(n)));}\n          return;\n        }\n        if(m.topic==='drive'){this.engineOn=!!p;return;}\n        const n=Number(p);\n        if(!isNaN(n))this.speed=Math.max(0,Math.min(100,Math.round(n)));\n      },\n      deep:true,\n      immediate:true\n    }\n  }\n}\n</script>",
     "storeOutMessages": true,
     "passthru": false,
     "resendOnRefresh": true,

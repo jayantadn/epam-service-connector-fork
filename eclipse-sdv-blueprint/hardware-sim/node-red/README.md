@@ -1,6 +1,6 @@
 # EV Range Dashboard — Node-RED Runtime
 
-Local Node-RED dashboard for the EV range extender simulation.Communicates with VM ECUs over Eclipse Zenoh via the built-in HTTP bridge.
+Local Node-RED dashboard for the EV range extender simulation. Communicates with VM ECUs over Eclipse Zenoh via the built-in HTTP bridge.
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@ Local Node-RED dashboard for the EV range extender simulation.Communicates with 
 Run these commands from the repository root:
 
 ```bash
-cd /home/goutham/epam-service-connector-fork/eclipse-sdv-blueprint
+cd eclipse-sdv-blueprint
 ```
 
 ### 1. Install dependencies
@@ -28,7 +28,8 @@ cd hardware-sim
 python3 -m venv venv
 source venv/bin/activate
 python3 -m pip install -r requirements.txt
-l
+cd node-red
+npm install
 ```
 
 Run `npm install` only once, unless `package.json` changes.
@@ -47,8 +48,7 @@ If the router is exposed on the local machine instead, use:
 
 ```bash
 export ZENOH_ROUTER=tcp/127.0.0.1:7447
-```cd node-red
-npm install
+```
 
 Do not type `<router-host>` literally. Replace it with a real hostname or IP
 address, for example:
@@ -89,12 +89,37 @@ http://127.0.0.1:1880/ev-range/control
 Other useful URLs:
 
 ```text
-Node-RED editor: http://127.0.0.1:1880
+Node-RED editor: http://127.0.0.1:1880 (disabled by default, see below)
 Bridge state:     http://127.0.0.1:1881/state
 ```
 
 Keep the terminal running while using the dashboard. Press `Ctrl+C` in that
 terminal to stop Node-RED and the bridge together.
+
+## Run with Docker
+
+No Node.js or Python install required on the host — everything runs inside
+the image.
+
+```bash
+cd hardware-sim/node-red
+docker build -t ev-range-node-red .
+docker run --rm -p 1880:1880 \
+  -e ZENOH_ROUTER=tcp/10.0.0.100:7447 \
+  ev-range-node-red
+```
+
+Then open:
+
+```text
+http://127.0.0.1:1880/ev-range/control
+```
+
+The bridge port (`1881`) stays internal to the container by default; add
+`-p 1881:1881` if you also want to `curl` the bridge state from the host.
+
+To enable the Node-RED editor inside the container, also pass
+`-e NODE_RED_ENABLE_EDITOR=true` and `-p 1880:1880` (already mapped above).
 
 ## Architecture
 
@@ -118,14 +143,19 @@ The bridge exposes:
 | `settings.js` | Node-RED runtime config (port, flow file) |
 | `zenoh_bus_bridge.py` | Zenoh bridge — exposes the Node-RED HTTP API |
 | `flows/ev-range-dashboard.json` | Node-RED flow (all widgets + logic) |
+| `Dockerfile` | Builds a self-contained image with Node-RED + the bridge |
+| `entrypoint.sh` | Container entrypoint — starts both processes, forwards signals |
 
 ## Environment Overrides
 
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `1880` | Node-RED listen port |
+| `NODE_RED_HOST` | `127.0.0.1` | Node-RED listen host |
 | `BRIDGE_PORT` | `1881` | Bridge HTTP API port |
 | `ZENOH_ROUTER` | `tcp/127.0.0.1:7447` | Same Zenoh router endpoint used by `pytk_hwsim.py` |
+| `NODE_RED_ENABLE_EDITOR` | `false` | Set to `true` to enable the flow editor. There is no `adminAuth`, so keep this off unless the port is not reachable by others |
+| `NODE_RED_FUNCTION_EXTERNAL_MODULES` | `false` | Set to `true` to allow Function nodes to `require` external modules |
 
 ## Troubleshooting
 
