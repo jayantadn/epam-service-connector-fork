@@ -54,7 +54,7 @@ STATUS_KEY_SEAT = "dash/status/seat"
 
 INDICATOR_COLORS = {
     "green": "#2ecc71",
-    "red": "#e74c3c",
+    "red": "#ff3b30",
     "blue": "#3498db",
     "grey": "#7f8c8d",
 }
