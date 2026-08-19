@@ -1,7 +1,6 @@
 # EV Range Dashboard — Node-RED Runtime
 
-Local Node-RED dashboard for the EV range extender simulation.
-Communicates with VM ECUs over Eclipse Zenoh via the built-in HTTP bridge.
+Local Node-RED dashboard for the EV range extender simulation.Communicates with VM ECUs over Eclipse Zenoh via the built-in HTTP bridge.
 
 ## Prerequisites
 
@@ -26,9 +25,10 @@ install the Zenoh package:
 
 ```bash
 cd hardware-sim
+python3 -m venv venv
+source venv/bin/activate
 python3 -m pip install -r requirements.txt
-cd node-red
-npm install
+l
 ```
 
 Run `npm install` only once, unless `package.json` changes.
@@ -47,7 +47,8 @@ If the router is exposed on the local machine instead, use:
 
 ```bash
 export ZENOH_ROUTER=tcp/127.0.0.1:7447
-```
+```cd node-red
+npm install
 
 Do not type `<router-host>` literally. Replace it with a real hostname or IP
 address, for example:
