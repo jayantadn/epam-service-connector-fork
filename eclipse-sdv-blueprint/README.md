@@ -253,14 +253,11 @@ aos-signer go
 
 **Automated AOS Edge setup**
 
-1. in [AOS Cloud deployment on playground](https://playground.digital.auto/model/67f76c0d8c609a0027662a69/library/prototype/69ce30f438bb8e98f0af5ac8/plug?plugid=aos-cloud-deployment) upload OEM certificates on the Aos-Edge setup
-
-![Upload the OEM certificate in the AOS Edge setup](./images/aosedge-setup-automation.png)
-1. Select the required unit .
-1. Close the popup and click on Run AosEdge Setup.
-
-![Select the required unit](./images/aosautoamtion-unit.png)
-
+1. In [AOS Cloud deployment on playground](https://playground.digital.auto/model/67f76c0d8c609a0027662a69/library/prototype/69ce30f438bb8e98f0af5ac8/plug?plugid=aos-cloud-deployment), upload OEM certificates to the AOS Edge setup.
+   ![Upload the OEM certificates in the AOS Edge setup](./images/aosedge-setup-automation.png)
+2. Select the required unit.
+   ![Select the required unit](./images/aosautoamtion-unit.png)
+3. Close the popup and click `Run AosEdge Setup`.
 This button is used to automate the maunal steps of creating `unitset` , `subject` and configuring `target system` .
 
 
