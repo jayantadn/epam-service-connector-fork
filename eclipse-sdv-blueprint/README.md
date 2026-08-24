@@ -253,6 +253,20 @@ aos-signer go
 
 **Automated AOS Edge setup**
 
+1. in [AOS Cloud deployment on playground](https://playground.digital.auto/model/67f76c0d8c609a0027662a69/library/prototype/69ce30f438bb8e98f0af5ac8/plug?plugid=aos-cloud-deployment) upload OEM certificates on the Aos-Edge setup
+
+![Upload the OEM certificate in the AOS Edge setup](./images/aosedge-setup-automation.png)
+1. Select the required unit .
+1. Close the popup and click on Run AosEdge Setup.
+
+![Select the required unit](./images/aosautoamtion-unit.png)
+
+This button is used to automate the maunal steps of creating `unitset` , `subject` and configuring `target system` .
+
+
+**If the above atomation is done no need to perform the below steps of automation**
+because the button and script performs the same task .
+
 1. Change into the automation directory
    ```bash
    cd eclipse-sdv-blueprint/Aosedge-Automation
